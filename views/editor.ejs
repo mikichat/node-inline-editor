@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>편집: <%= filename %>
+    </title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            color: #e0e0e0;
+        }
+
+        .toolbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(26, 26, 46, 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 15px 30px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            z-index: 1000;
+        }
+
+        .toolbar-left {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .btn-back {
+            padding: 10px 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: #e0e0e0;
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+
+        .btn-back:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .filename {
+            font-size: 1.1rem;
+            font-weight: 500;
+            color: #00d9ff;
+        }
+
+        .toolbar-right {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 10px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-undo {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+            color: white;
+        }
+
+        .btn-undo:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(238, 90, 36, 0.4);
+        }
+
+        .btn-restore {
+            background: linear-gradient(135deg, #a55eea, #8854d0);
+            color: white;
+        }
+
+        .btn-restore:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(136, 84, 208, 0.4);
+        }
+
+        .editor-container {
+            margin-top: 80px;
+            padding: 40px;
+        }
+
+        .content-frame {
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            min-height: calc(100vh - 200px);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .content-frame [data-line] {
+            position: relative;
+            cursor: text;
+            padding: 4px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+
+        .content-frame [data-line]:hover {
+            background: rgba(0, 217, 255, 0.1);
+        }
+
+        .content-frame [data-line]:focus {
+            outline: 2px solid #00d9ff;
+            background: rgba(0, 217, 255, 0.15);
+        }
+
+        .content-frame [data-line]::before {
+            content: none;
+        }
+
+        /* 모달 스타일 */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(5px);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: #1a1a2e;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow: hidden;
+        }
+
+        .modal-header {
+            padding: 20px 25px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h2 {
+            font-size: 1.3rem;
+            background: linear-gradient(90deg, #a55eea, #8854d0);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 1.5rem;
+            cursor: pointer;
+            transition: color 0.3s;
+        }
+
+        .modal-close:hover {
+            color: #fff;
+        }
+
+        .modal-body {
+            padding: 20px 25px;
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+
+        .backup-list {
+            list-style: none;
+        }
+
+        .backup-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            margin-bottom: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .backup-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .backup-info {
+            font-size: 0.9rem;
+        }
+
+        .backup-time {
+            color: #888;
+            font-size: 0.8rem;
+            margin-top: 4px;
+        }
+
+        .btn-restore-item {
+            padding: 8px 16px;
+            background: linear-gradient(135deg, #00d9ff, #00ff88);
+            border: none;
+            border-radius: 6px;
+            color: #1a1a2e;
+            font-weight: 500;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-restore-item:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 15px rgba(0, 217, 255, 0.4);
+        }
+
+        .no-backups {
+            text-align: center;
+            color: #666;
+            padding: 40px 20px;
+        }
+
+        /* 토스트 알림 */
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            padding: 15px 25px;
+            background: linear-gradient(135deg, #00d9ff, #00ff88);
+            color: #1a1a2e;
+            border-radius: 10px;
+            font-weight: 500;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 3000;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.error {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+            color: white;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="toolbar">
+        <div class="toolbar-left">
+            <a href="/" class="btn-back">← 목록으로</a>
+            <span class="filename">📄 <%= filename %></span>
+        </div>
+        <div class="toolbar-right">
+            <button id="btnUndo" class="btn btn-undo">↩ 되돌리기</button>
+            <button id="btnRestore" class="btn btn-restore">📁 복원</button>
+        </div>
+    </div>
+
+    <div class="editor-container">
+        <div class="content-frame" id="contentFrame">
+            <%- content %>
+        </div>
+    </div>
+
+    <!-- 복원 모달 -->
+    <div class="modal-overlay" id="restoreModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>📁 백업에서 복원</h2>
+                <button class="modal-close" id="modalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <ul class="backup-list" id="backupList">
+                    <li class="no-backups">백업 목록을 불러오는 중...</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        const filename = '<%= filename %>';
+        let originalText = '';
+
+        // 토스트 알림 표시
+        function showToast(message, isError = false) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'toast' + (isError ? ' error' : '');
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+
+        // contenteditable 설정
+        document.querySelectorAll('[data-line]').forEach(el => {
+            el.setAttribute('contenteditable', 'true');
+
+            // focus 시 원본 저장
+            el.addEventListener('focus', function () {
+                originalText = this.innerHTML;
+            });
+
+            // blur 시 변경 감지 및 저장
+            el.addEventListener('blur', function () {
+                const newText = this.innerHTML.trim();
+                if (newText !== originalText.trim()) {
+                    const lineNumber = this.getAttribute('data-line');
+                    saveContent(lineNumber, newText);
+                }
+            });
+
+            // Enter 키 방지
+            el.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.blur();
+                }
+            });
+
+            // 붙여넣기 시 텍스트만 허용
+            el.addEventListener('paste', function (e) {
+                e.preventDefault();
+                const text = e.clipboardData.getData('text/plain');
+                document.execCommand('insertText', false, text);
+            });
+        });
+
+        // 저장 API 호출
+        async function saveContent(lineNumber, content) {
+            try {
+                const response = await fetch('/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename, line_number: lineNumber, content })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showToast('✓ 저장되었습니다');
+                } else {
+                    showToast(result.error || '저장 실패', true);
+                }
+            } catch (err) {
+                showToast('저장 중 오류 발생', true);
+            }
+        }
+
+        // 되돌리기
+        document.getElementById('btnUndo').addEventListener('click', async function () {
+            try {
+                const response = await fetch('/undo', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // 해당 라인 요소 찾아서 업데이트
+                    const el = document.querySelector(`[data-line="${result.line_number}"]`);
+                    if (el) {
+                        // 태그 사이의 텍스트만 추출해서 표시
+                        const temp = document.createElement('div');
+                        temp.innerHTML = result.content;
+                        el.textContent = temp.textContent;
+                    }
+                    showToast('↩ 되돌리기 완료');
+                } else {
+                    showToast(result.error || '되돌릴 기록이 없습니다', true);
+                }
+            } catch (err) {
+                showToast('되돌리기 중 오류 발생', true);
+            }
+        });
+
+        // 복원 모달 열기
+        document.getElementById('btnRestore').addEventListener('click', async function () {
+            document.getElementById('restoreModal').classList.add('active');
+            loadBackups();
+        });
+
+        // 모달 닫기
+        document.getElementById('modalClose').addEventListener('click', function () {
+            document.getElementById('restoreModal').classList.remove('active');
+        });
+
+        document.getElementById('restoreModal').addEventListener('click', function (e) {
+            if (e.target === this) {
+                this.classList.remove('active');
+            }
+        });
+
+        // 백업 목록 로드
+        async function loadBackups() {
+            const listEl = document.getElementById('backupList');
+            listEl.innerHTML = '<li class="no-backups">백업 목록을 불러오는 중...</li>';
+
+            try {
+                const response = await fetch(`/backups?filename=${encodeURIComponent(filename)}`);
+                const result = await response.json();
+
+                if (result.backups && result.backups.length > 0) {
+                    listEl.innerHTML = result.backups.map(backup => `
+                        <li class="backup-item">
+                            <div class="backup-info">
+                                <div>${backup.name}</div>
+                                <div class="backup-time">${new Date(backup.mtime).toLocaleString('ko-KR')}</div>
+                            </div>
+                            <button class="btn-restore-item" onclick="restoreBackup('${backup.name}')">복원</button>
+                        </li>
+                    `).join('');
+                } else {
+                    listEl.innerHTML = '<li class="no-backups">백업 파일이 없습니다.</li>';
+                }
+            } catch (err) {
+                listEl.innerHTML = '<li class="no-backups">백업 목록을 불러올 수 없습니다.</li>';
+            }
+        }
+
+        // 백업에서 복원
+        async function restoreBackup(backupFile) {
+            if (!confirm(`'${backupFile}' 백업으로 복원하시겠습니까?\n현재 내용은 자동으로 백업됩니다.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/restore', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename, backupFile })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    document.getElementById('restoreModal').classList.remove('active');
+                    showToast('✓ 복원되었습니다. 페이지를 새로고침합니다.');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast(result.error || '복원 실패', true);
+                }
+            } catch (err) {
+                showToast('복원 중 오류 발생', true);
+            }
+        }
+    </script>
+</body>
+
+</html>

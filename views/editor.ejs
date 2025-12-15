@@ -59,7 +59,13 @@
         .filename {
             font-size: 1.1rem;
             font-weight: 500;
-            color: #00d9ff;
+            color: #a5b4fc;
+            /* Soft Indigo */
+        }
+
+        ::selection {
+            background: rgba(139, 92, 246, 0.4);
+            color: #ffffff;
         }
 
         .toolbar-right {
@@ -120,12 +126,14 @@
         }
 
         .content-frame [data-line]:hover {
-            background: rgba(0, 217, 255, 0.1);
+            background: rgba(139, 92, 246, 0.1);
+            /* Violet Tint */
         }
 
         .content-frame [data-line]:focus {
-            outline: 2px solid #00d9ff;
-            background: rgba(0, 217, 255, 0.15);
+            outline: 2px solid #8b5cf6;
+            /* Modern Violet */
+            background: rgba(139, 92, 246, 0.15);
         }
 
         .content-frame [data-line]::before {

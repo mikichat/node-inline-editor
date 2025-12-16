@@ -29,6 +29,15 @@ function ensureDir(dirPath) {
     }
 }
 
+// 파일 경로를 고유한 백업 폴더명으로 변환
+// 예: test.html -> test, a/test.html -> a__test
+function getBackupFolderName(filename) {
+    // .html 확장자 제거
+    const withoutExt = filename.replace(/\.html$/i, '');
+    // 경로 구분자(/ 또는 \)를 __로 변환
+    return withoutExt.replace(/[\/\\]/g, '__');
+}
+
 // 태그에 data-line 속성 주입 (멀티라인 지원 개선)
 function injectLineNumbers(content) {
     const lines = content.split('\n');
@@ -270,14 +279,49 @@ app.post('/save', (req, res) => {
             return res.status(400).json({ error: '잘못된 라인 번호입니다.' });
         }
 
-        // 백업 생성
-        const fileBasename = path.basename(filename, '.html');
-        const backupFileDir = path.join(BACKUP_DIR, fileBasename);
+        // 백업 생성 (일별 스냅샷 + Diff 방식)
+        const backupFolderName = getBackupFolderName(filename);
+        const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+        const backupFileDir = path.join(BACKUP_DIR, backupFolderName, today);
         ensureDir(backupFileDir);
 
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const backupPath = path.join(backupFileDir, `${timestamp}.html`);
-        fs.writeFileSync(backupPath, fileContent, 'utf-8');
+        const firstBackupPath = path.join(backupFileDir, '00_first.html');
+        const lastBackupPath = path.join(backupFileDir, 'last.html');
+        let backupPath;
+
+        // 그날 첫 백업인지 확인
+        if (!fs.existsSync(firstBackupPath)) {
+            // 첫 수정: 원본 전체 파일 저장
+            fs.writeFileSync(firstBackupPath, fileContent, 'utf-8');
+            fs.writeFileSync(lastBackupPath, fileContent, 'utf-8');
+            backupPath = firstBackupPath;
+        } else {
+            // 중간 수정: Diff만 저장 (before + after)
+            const existingDiffs = fs.readdirSync(backupFileDir)
+                .filter(f => f.match(/^\d{2}_diff\.json$/))
+                .sort();
+            const nextNum = String(existingDiffs.length + 1).padStart(2, '0');
+            const diffPath = path.join(backupFileDir, `${nextNum}_diff.json`);
+
+            // 변경 전 내용 저장 (복원용)
+            const beforeContent = lines[lineIndex];
+
+            // 변경 후 내용을 미리 계산 (복원용)
+            const sanitizedForDiff = removeEditorAttributes(content);
+            const tempLines = [...lines];
+            const tempResult = replaceMultiLineElement(tempLines, lineIndex, sanitizedForDiff);
+            const afterContent = tempResult.lines[lineIndex];
+
+            const timestamp = new Date().toISOString();
+            const diffData = {
+                timestamp,
+                lineNumber: parseInt(line_number),
+                before: beforeContent,
+                after: afterContent
+            };
+            fs.writeFileSync(diffPath, JSON.stringify(diffData, null, 2), 'utf-8');
+            backupPath = diffPath;
+        }
 
         // 컨텐츠 정화 (에디터 속성 제거)
         const sanitizedContent = removeEditorAttributes(content);
@@ -300,8 +344,12 @@ app.post('/save', (req, res) => {
         }
 
         // 파일 저장
-        fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
+        const newContent = lines.join('\n');
+        fs.writeFileSync(filePath, newContent, 'utf-8');
         console.log('[DEBUG] File saved successfully');
+
+        // last.html 업데이트 (항상 최신 상태 유지)
+        fs.writeFileSync(lastBackupPath, newContent, 'utf-8');
 
         res.json({
             success: true,
@@ -314,7 +362,7 @@ app.post('/save', (req, res) => {
     }
 });
 
-// 백업 목록 조회 API
+// 백업 목록 조회 API (일별 폴더 구조 지원)
 app.get('/backups', (req, res) => {
     const { filename } = req.query;
 
@@ -322,26 +370,41 @@ app.get('/backups', (req, res) => {
         return res.status(400).json({ error: '파일명이 필요합니다.' });
     }
 
-    const fileBasename = path.basename(filename, '.html');
-    const backupFileDir = path.join(BACKUP_DIR, fileBasename);
+    const backupFolderName = getBackupFolderName(filename);
+    const backupFileDir = path.join(BACKUP_DIR, backupFolderName);
 
     if (!fs.existsSync(backupFileDir)) {
         return res.json({ backups: [] });
     }
 
-    const backups = fs.readdirSync(backupFileDir)
-        .filter(file => file.endsWith('.html'))
-        .map(file => ({
-            name: file,
-            timestamp: file.replace('.html', '').replace(/-/g, (m, i) => i < 20 ? (i === 10 ? 'T' : (i === 13 || i === 16 ? ':' : '-')) : m),
-            mtime: fs.statSync(path.join(backupFileDir, file)).mtime
-        }))
-        .sort((a, b) => b.mtime - a.mtime);
+    const backups = [];
+    const dateFolders = fs.readdirSync(backupFileDir)
+        .filter(f => fs.statSync(path.join(backupFileDir, f)).isDirectory())
+        .sort((a, b) => b.localeCompare(a)); // 최신 날짜 먼저
 
+    for (const dateFolder of dateFolders) {
+        const dayDir = path.join(backupFileDir, dateFolder);
+        const files = fs.readdirSync(dayDir);
+
+        // 해당 날짜의 파일들 추가
+        for (const file of files) {
+            const filePath = path.join(dayDir, file);
+            const stat = fs.statSync(filePath);
+
+            backups.push({
+                name: `${dateFolder}/${file}`,
+                date: dateFolder,
+                type: file.endsWith('.html') ? 'snapshot' : 'diff',
+                mtime: stat.mtime
+            });
+        }
+    }
+
+    // 날짜별로 그룹핑된 형태로 반환
     res.json({ backups });
 });
 
-// 복원 API
+// 복원 API (일별 폴더 구조 + Diff 순차 복원 지원)
 app.post('/restore', (req, res) => {
     const { filename, backupFile } = req.body;
 
@@ -349,8 +412,9 @@ app.post('/restore', (req, res) => {
         return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
     }
 
-    const fileBasename = path.basename(filename, '.html');
-    const backupPath = path.join(BACKUP_DIR, fileBasename, backupFile);
+    const backupFolderName = getBackupFolderName(filename);
+    // backupFile은 "YYYY-MM-DD/파일명" 형식
+    const backupPath = path.join(BACKUP_DIR, backupFolderName, backupFile);
     const filePath = path.join(PUBLIC_DIR, filename);
 
     if (!fs.existsSync(backupPath)) {
@@ -358,21 +422,69 @@ app.post('/restore', (req, res) => {
     }
 
     try {
-        // 현재 파일도 백업
+        // 현재 파일도 백업 (복원 전 상태 저장)
         const currentContent = fs.readFileSync(filePath, 'utf-8');
+        const today = new Date().toISOString().split('T')[0];
+        const todayBackupDir = path.join(BACKUP_DIR, backupFolderName, today);
+        ensureDir(todayBackupDir);
+
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const preRestoreBackup = path.join(BACKUP_DIR, fileBasename, `${timestamp}_pre-restore.html`);
-        ensureDir(path.join(BACKUP_DIR, fileBasename));
+        const preRestoreBackup = path.join(todayBackupDir, `${timestamp}_pre-restore.html`);
         fs.writeFileSync(preRestoreBackup, currentContent, 'utf-8');
 
-        // 복원
-        const backupContent = fs.readFileSync(backupPath, 'utf-8');
-        fs.writeFileSync(filePath, backupContent, 'utf-8');
+        let restoredContent;
+
+        if (backupFile.endsWith('.json')) {
+            // Diff 파일로 복원: 00_first.html + diff 순차 적용
+            const parts = backupFile.split('/');
+            const dateFolder = parts[0];
+            const targetDiff = parts[1]; // 예: "02_diff.json"
+            const targetNum = parseInt(targetDiff.split('_')[0]); // 예: 2
+
+            const dayDir = path.join(BACKUP_DIR, backupFolderName, dateFolder);
+            const firstPath = path.join(dayDir, '00_first.html');
+
+            if (!fs.existsSync(firstPath)) {
+                return res.status(400).json({ error: '원본 파일(00_first.html)이 없어 diff 복원이 불가능합니다.' });
+            }
+
+            // 00_first.html 로드
+            restoredContent = fs.readFileSync(firstPath, 'utf-8');
+
+            // diff 파일들을 순차적으로 적용 (01 ~ targetNum)
+            for (let i = 1; i <= targetNum; i++) {
+                const diffFileName = `${String(i).padStart(2, '0')}_diff.json`;
+                const diffFilePath = path.join(dayDir, diffFileName);
+
+                if (fs.existsSync(diffFilePath)) {
+                    const diffData = JSON.parse(fs.readFileSync(diffFilePath, 'utf-8'));
+
+                    if (diffData.after) {
+                        // before -> after 로 교체
+                        const lines = restoredContent.split('\n');
+                        const lineIdx = diffData.lineNumber - 1;
+
+                        if (lineIdx >= 0 && lineIdx < lines.length) {
+                            lines[lineIdx] = diffData.after;
+                            restoredContent = lines.join('\n');
+                        }
+                    }
+                }
+            }
+
+            console.log(`[DEBUG] Restored via diff: applied ${targetNum} diffs`);
+        } else {
+            // 스냅샷 파일로 복원 (00_first.html, last.html 등)
+            restoredContent = fs.readFileSync(backupPath, 'utf-8');
+        }
+
+        // 복원 적용
+        fs.writeFileSync(filePath, restoredContent, 'utf-8');
 
         res.json({
             success: true,
             message: '복원되었습니다.',
-            content: injectLineNumbers(backupContent)
+            content: injectLineNumbers(restoredContent)
         });
     } catch (err) {
         res.status(500).json({ error: err.message });

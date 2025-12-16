@@ -44,7 +44,13 @@ function injectLineNumbers(content) {
     const result = [];
 
     // 편집 제외할 태그 목록 (소문자)
-    const excludedTags = ['html', 'head', 'body', 'script', 'style', 'meta', 'link', 'title', '!doctype'];
+    // 컨테이너 태그는 내부 요소 편집을 위해 제외
+    const excludedTags = [
+        'html', 'head', 'body', 'script', 'style', 'meta', 'link', 'title', '!doctype',
+        'div', 'span', 'ul', 'ol', 'dl', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'colgroup', 'caption',
+        'select', 'optgroup', 'datalist', 'fieldset', 'form', 'nav', 'main', 'section',
+        'article', 'aside', 'header', 'footer', 'figure', 'details', 'summary', 'br', 'hr'
+    ];
 
     for (let i = 0; i < lines.length; i++) {
         let line = lines[i];
@@ -128,88 +134,105 @@ function removeEditorAttributes(content) {
         .replace(/\s*contenteditable="[^"]*"/g, '');
 }
 
-// 멀티라인 컨텐츠 교체
-function replaceMultiLineElement(lines, startLineIndex, newContent) {
-    const line = lines[startLineIndex];
+// 단순 1라인 텍스트 컨텐츠 교체 (태그 구조 유지, 텍스트만 교체)
+function replaceSingleLine(lines, lineIndex, newContent) {
+    const line = lines[lineIndex];
+
     // 태그명 추출
     const tagMatch = line.match(/<([a-zA-Z][a-zA-Z0-9]*)/);
-    if (!tagMatch) return { lines, replacedLines: null };
+    if (!tagMatch) return { lines, originalLine: null };
 
     const tagName = tagMatch[1];
 
-    // 닫는 태그 위치 찾기
-    const closingLoc = findClosingTagLocation(lines, startLineIndex, tagName);
-
-    if (!closingLoc) {
-        console.log('[DEBUG] Closing tag not found');
-        return { lines, replacedLines: null };
-    }
-
     // 시작 태그의 끝(>) 위치 찾기
-    const openTagEnd = lines[startLineIndex].indexOf('>');
-    if (openTagEnd === -1) return { lines, replacedLines: null };
+    const openTagEnd = line.indexOf('>');
+    if (openTagEnd === -1) return { lines, originalLine: null };
 
-    // 원본 라인들 백업 (Undo용)
-    const originalLines = lines.slice(startLineIndex, closingLoc.lineIndex + 1);
+    // 닫는 태그 찾기 (같은 라인 내에서만)
+    const closeTagRegex = new RegExp(`</${tagName}>`, 'i');
+    const closeTagMatch = line.match(closeTagRegex);
 
-    // 기본 들여쓰기 레벨 파악
-    const baseIndentMatch = lines[startLineIndex].match(/^\s*/);
-    const baseIndent = baseIndentMatch ? baseIndentMatch[0] : '';
+    if (!closeTagMatch) {
+        // 닫는 태그가 같은 라인에 없으면 멀티라인 요소
+        console.log('[DEBUG] Closing tag not on same line, checking if simple text multiline');
 
-    // 전체 태그 문자열 재구성
-    let before, after;
+        // findClosingTagLocation 사용하여 닫는 태그 위치 찾기
+        const closingLoc = findClosingTagLocation(lines, lineIndex, tagName);
+        const endLineIndex = closingLoc ? closingLoc.lineIndex : lineIndex;
 
-    if (startLineIndex === closingLoc.lineIndex) {
-        before = lines[startLineIndex].substring(0, openTagEnd + 1);
-        after = lines[startLineIndex].substring(closingLoc.index);
-    } else {
-        before = lines[startLineIndex].substring(0, openTagEnd + 1);
-        after = lines[closingLoc.lineIndex].substring(closingLoc.index);
+        // li, td 태그의 경우 단순 텍스트만 있으면 인라인 편집 허용
+        if ((tagName.toLowerCase() === 'li' || tagName.toLowerCase() === 'td') && closingLoc) {
+            // 시작 라인부터 끝 라인까지의 전체 내용 추출
+            const fullContent = lines.slice(lineIndex, endLineIndex + 1).join('\n');
+
+            // 시작 태그와 닫는 태그 제거하여 내부 내용만 추출
+            const contentBetweenTags = fullContent.substring(
+                fullContent.indexOf('>') + 1,
+                fullContent.lastIndexOf('</' + tagName + '>')
+            );
+
+            // 내부에 다른 HTML 태그가 있는지 확인 (br 제외)
+            const hasOtherTags = /<(?!br\s*\/?>)[^>]+>/i.test(contentBetweenTags);
+
+            if (!hasOtherTags) {
+                // 순수 텍스트 (또는 br만 있음) - 인라인 편집 허용
+                console.log('[DEBUG] Simple text multiline detected, allowing inline edit');
+
+                // 원본 라인 백업
+                const originalLine = line;
+
+                // 들여쓰기 추출
+                const indentMatch = line.match(/^\s*/);
+                const indent = indentMatch ? indentMatch[0] : '';
+
+                // 시작 태그 부분 추출
+                const before = line.substring(0, openTagEnd + 1);
+
+                // 새 내용에서 에디터 속성 제거
+                const cleanedContent = removeEditorAttributes(newContent);
+
+                // 한 줄로 합치기
+                const newLine = indent + before + cleanedContent + '</' + tagName + '>';
+
+                // 원본 멀티라인을 단일 라인으로 교체
+                lines.splice(lineIndex, endLineIndex - lineIndex + 1, newLine);
+
+                console.log('[DEBUG] Converted multiline to single line:', newLine);
+
+                return { lines, originalLine };
+            }
+        }
+
+        // 일반 멀티라인 요소 (팝업 에디터 사용)
+        console.log('[DEBUG] Complex multiline element, using popup editor');
+        return {
+            lines,
+            originalLine: null,
+            isMultiline: true,
+            startLineIndex: lineIndex,
+            endLineIndex: endLineIndex
+        };
     }
 
-    // 태그 전체를 합쳐서 Beautify 적용
-    // 태그 래퍼(before, after)를 포함시킴으로써 js-beautify가 적절한 들여쓰기를 할 수 있도록 함.
-    const fullTagString = before + newContent + after;
+    // 원본 라인 백업 (Undo용)
+    const originalLine = line;
 
-    console.log('[DEBUG] Before beautify:', fullTagString);
+    // 시작 태그와 닫는 태그 사이의 내용만 교체
+    const closeTagIndex = line.indexOf(closeTagMatch[0]);
+    const before = line.substring(0, openTagEnd + 1);
+    const after = line.substring(closeTagIndex);
 
-    // 공백 누적 방지를 위해 입력 문자열의 앞뒤 공백 제거 후 포매팅 (Trim)
-    const cleanTagString = fullTagString.trim();
+    // newContent에서 에디터 속성만 제거 (내부 HTML 태그는 유지)
+    const cleanedContent = removeEditorAttributes(newContent);
 
-    const formattedContent = beautify(cleanTagString, {
-        indent_size: 4,
-        indent_char: ' ',
-        max_preserve_newlines: 0,
-        preserve_newlines: false,
-        indent_scripts: 'normal',
-        wrap_line_length: 0,
-        unformatted: []
-    });
+    // 새 라인 조합
+    const newLine = before + cleanedContent + after;
 
-    // 들여쓰기 보정: 모든 라인에 baseIndent 추가
-    const indentedContent = formattedContent.split('\n').map((l, index) => {
-        return (l.trim().length > 0) ? baseIndent + l : l;
-    }).join('\n');
+    console.log('[DEBUG] Single line replace:', { before, cleanedContent, after });
 
-    console.log('[DEBUG] After beautify:\n', indentedContent);
+    lines[lineIndex] = newLine;
 
-    // 라인 교체
-    // indentedContent는 여러 줄 텍스트임.
-    lines[startLineIndex] = indentedContent;
-
-    // 나머지 라인들은 삭제 (splice 사용)
-    let deleteCount = 0;
-    if (startLineIndex === closingLoc.lineIndex) {
-        deleteCount = 0;
-    } else {
-        deleteCount = closingLoc.lineIndex - startLineIndex;
-    }
-
-    if (deleteCount > 0) {
-        lines.splice(startLineIndex + 1, deleteCount);
-    }
-
-    return { lines, replacedLines: originalLines };
+    return { lines, originalLine };
 }
 
 // ================================
@@ -253,6 +276,219 @@ app.get('/editor', (req, res) => {
         content: injectedContent,
         originalContent: content
     });
+});
+
+// 소스 조회 API (전체 파일 내용)
+app.get('/source', (req, res) => {
+    const filename = req.query.filename;
+
+    if (!filename) {
+        return res.status(400).json({ error: '파일명이 필요합니다.' });
+    }
+
+    const filePath = path.join(PUBLIC_DIR, filename);
+
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
+    }
+
+    const content = fs.readFileSync(filePath, 'utf-8');
+    res.json({ content });
+});
+
+// 소스 정렬 API (js-beautify 사용)
+app.post('/format-source', (req, res) => {
+    const { content } = req.body;
+
+    if (content === undefined) {
+        return res.status(400).json({ error: '내용이 필요합니다.' });
+    }
+
+    try {
+        const formattedContent = beautify(content, {
+            indent_size: 4,
+            indent_char: ' ',
+            max_preserve_newlines: 2,
+            preserve_newlines: true,
+            indent_scripts: 'normal',
+            wrap_line_length: 0,
+            unformatted: ['a', 'span', 'strong', 'em', 'b', 'i', 'u', 'br']
+        });
+
+        res.json({ success: true, formattedContent });
+    } catch (err) {
+        console.error('[DEBUG] Format error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 라인 정보 조회 API (더블클릭으로 멀티라인 에디터 열기용)
+app.get('/line-info', (req, res) => {
+    const { filename, line } = req.query;
+
+    if (!filename || !line) {
+        return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
+    }
+
+    const filePath = path.join(PUBLIC_DIR, filename);
+
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
+    }
+
+    try {
+        const fileContent = fs.readFileSync(filePath, 'utf-8');
+        const lines = fileContent.split('\n');
+        const lineIndex = parseInt(line) - 1;
+
+        if (lineIndex < 0 || lineIndex >= lines.length) {
+            return res.status(400).json({ error: '잘못된 라인 번호입니다.' });
+        }
+
+        const currentLine = lines[lineIndex];
+
+        // 태그명 추출
+        const tagMatch = currentLine.match(/<([a-zA-Z][a-zA-Z0-9]*)/);
+        if (!tagMatch) {
+            return res.json({ success: false, error: '태그를 찾을 수 없습니다.' });
+        }
+
+        const tagName = tagMatch[1];
+
+        // 닫는 태그 위치 찾기
+        const closingLoc = findClosingTagLocation(lines, lineIndex, tagName);
+        const endLineIndex = closingLoc ? closingLoc.lineIndex : lineIndex;
+
+        // 해당 범위의 내용 추출
+        const content = lines.slice(lineIndex, endLineIndex + 1).join('\n');
+
+        res.json({
+            success: true,
+            startLine: lineIndex + 1,
+            endLine: endLineIndex + 1,
+            content
+        });
+    } catch (err) {
+        console.error('[DEBUG] Line info error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+app.post('/save-source', (req, res) => {
+    const { filename, content } = req.body;
+
+    if (!filename || content === undefined) {
+        return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
+    }
+
+    const filePath = path.join(PUBLIC_DIR, filename);
+
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
+    }
+
+    try {
+        // 백업 생성
+        const backupFolderName = getBackupFolderName(filename);
+        const today = new Date().toISOString().split('T')[0];
+        const backupFileDir = path.join(BACKUP_DIR, backupFolderName, today);
+        ensureDir(backupFileDir);
+
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const backupPath = path.join(backupFileDir, `${timestamp}_source-edit.html`);
+
+        // 현재 파일 백업
+        const currentContent = fs.readFileSync(filePath, 'utf-8');
+        fs.writeFileSync(backupPath, currentContent, 'utf-8');
+
+        // 새 내용 저장
+        fs.writeFileSync(filePath, content, 'utf-8');
+
+        // last.html 업데이트
+        const lastBackupPath = path.join(backupFileDir, 'last.html');
+        fs.writeFileSync(lastBackupPath, content, 'utf-8');
+
+        console.log('[DEBUG] Source saved successfully');
+        res.json({ success: true, message: '소스가 저장되었습니다.' });
+    } catch (err) {
+        console.error('[DEBUG] Save source error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 멀티라인 저장 API (특정 라인 범위 교체)
+app.post('/save-multiline', (req, res) => {
+    const { filename, startLine, endLine, content } = req.body;
+
+    if (!filename || !startLine || !endLine || content === undefined) {
+        return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
+    }
+
+    const filePath = path.join(PUBLIC_DIR, filename);
+
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
+    }
+
+    try {
+        const fileContent = fs.readFileSync(filePath, 'utf-8');
+        let lines = fileContent.split('\n');
+
+        const startIdx = parseInt(startLine) - 1;
+        const endIdx = parseInt(endLine) - 1;
+
+        if (startIdx < 0 || endIdx >= lines.length || startIdx > endIdx) {
+            return res.status(400).json({ error: '잘못된 라인 범위입니다.' });
+        }
+
+        // 백업 생성
+        const backupFolderName = getBackupFolderName(filename);
+        const today = new Date().toISOString().split('T')[0];
+        const backupFileDir = path.join(BACKUP_DIR, backupFolderName, today);
+        ensureDir(backupFileDir);
+
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const backupPath = path.join(backupFileDir, `${timestamp}_multiline-edit.html`);
+        fs.writeFileSync(backupPath, fileContent, 'utf-8');
+
+        // 에디터 속성 제거
+        const sanitizedContent = removeEditorAttributes(content);
+
+        // 지정된 라인 범위를 새 내용으로 교체
+        const newContentLines = sanitizedContent.split('\n');
+
+        // 원본 라인들 백업 (Undo용)
+        const originalLines = lines.slice(startIdx, endIdx + 1);
+
+        // 기존 라인들 제거하고 새 라인들 삽입
+        lines.splice(startIdx, endIdx - startIdx + 1, ...newContentLines);
+
+        // 파일 저장
+        const newFileContent = lines.join('\n');
+        fs.writeFileSync(filePath, newFileContent, 'utf-8');
+
+        // last.html 업데이트
+        const lastBackupPath = path.join(backupFileDir, 'last.html');
+        fs.writeFileSync(lastBackupPath, newFileContent, 'utf-8');
+
+        // Undo 히스토리 저장 (멀티라인 복원용)
+        if (!req.session.history) { req.session.history = []; }
+        if (req.session.history.length >= 20) { req.session.history.shift(); }
+
+        req.session.history.push({
+            filename,
+            isMultiline: true,
+            startLineIndex: startIdx,
+            endLineIndex: endIdx,
+            originalLines: originalLines,
+            newLineCount: newContentLines.length
+        });
+
+        console.log('[DEBUG] Multiline saved successfully');
+        res.json({ success: true, message: '멀티라인 저장이 완료되었습니다.' });
+    } catch (err) {
+        console.error('[DEBUG] Save multiline error:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // 저장 API
@@ -309,7 +545,28 @@ app.post('/save', (req, res) => {
             // 변경 후 내용을 미리 계산 (복원용)
             const sanitizedForDiff = removeEditorAttributes(content);
             const tempLines = [...lines];
-            const tempResult = replaceMultiLineElement(tempLines, lineIndex, sanitizedForDiff);
+            const tempResult = replaceSingleLine(tempLines, lineIndex, sanitizedForDiff);
+
+            // 멀티라인 요소 체크 - 팝업 에디터로 전환
+            if (tempResult.originalLine === null && tempResult.isMultiline) {
+                const startLine = tempResult.startLineIndex + 1;
+                const endLine = tempResult.endLineIndex + 1;
+                const originalContent = lines.slice(tempResult.startLineIndex, tempResult.endLineIndex + 1).join('\n');
+
+                return res.json({
+                    success: false,
+                    isMultiline: true,
+                    startLine,
+                    endLine,
+                    originalContent
+                });
+            } else if (tempResult.originalLine === null) {
+                return res.json({
+                    success: false,
+                    error: '편집할 수 없는 요소입니다.'
+                });
+            }
+
             const afterContent = tempResult.lines[lineIndex];
 
             const timestamp = new Date().toISOString();
@@ -327,21 +584,41 @@ app.post('/save', (req, res) => {
         const sanitizedContent = removeEditorAttributes(content);
 
         // 컨텐츠 교체
-        const result = replaceMultiLineElement(lines, lineIndex, sanitizedContent);
+        const result = replaceSingleLine(lines, lineIndex, sanitizedContent);
+
+        // 멀티라인 요소는 팝업 에디터로 전환
+        if (result.originalLine === null && result.isMultiline) {
+            // 멀티라인 요소의 원본 내용 추출
+            const startLine = result.startLineIndex + 1;
+            const endLine = result.endLineIndex + 1;
+            const originalContent = lines.slice(result.startLineIndex, result.endLineIndex + 1).join('\n');
+
+            return res.json({
+                success: false,
+                isMultiline: true,
+                startLine,
+                endLine,
+                originalContent
+            });
+        } else if (result.originalLine === null) {
+            return res.json({
+                success: false,
+                error: '편집할 수 없는 요소입니다.'
+            });
+        }
+
         lines = result.lines;
 
         // Undo 히스토리 저장
-        if (result.replacedLines) {
-            if (!req.session.history) { req.session.history = []; }
-            if (req.session.history.length >= 20) { req.session.history.shift(); }
+        if (!req.session.history) { req.session.history = []; }
+        if (req.session.history.length >= 20) { req.session.history.shift(); }
 
-            // 멀티라인 복원을 위해 라인 배열 전체를 저장
-            req.session.history.push({
-                filename,
-                startLineIndex: lineIndex,
-                originalLines: result.replacedLines
-            });
-        }
+        // 단일 라인 복원을 위해 원본 라인 저장
+        req.session.history.push({
+            filename,
+            lineIndex: lineIndex,
+            originalLine: result.originalLine
+        });
 
         // 파일 저장
         const newContent = lines.join('\n');
@@ -505,26 +782,37 @@ app.post('/undo', (req, res) => {
         let lines = fileContent.split('\n');
 
         // 멀티라인 복원
-        if (lastAction.originalLines) {
-            const startLine = lastAction.startLineIndex;
-            const originalLines = lastAction.originalLines;
+        if (lastAction.isMultiline && lastAction.originalLines) {
+            const startIdx = lastAction.startLineIndex;
+            const newLineCount = lastAction.newLineCount || 1;
 
-            for (let i = 0; i < originalLines.length; i++) {
-                if (startLine + i < lines.length) {
-                    lines[startLine + i] = originalLines[i];
-                }
-            }
-        } else if (lastAction.originalLine) {
-            lines[lastAction.lineIndex] = lastAction.originalLine;
+            // 현재 삽입된 라인들 제거하고 원본 라인들 복원
+            lines.splice(startIdx, newLineCount, ...lastAction.originalLines);
+
+            fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
+
+            // 복원된 내용의 첫 번째 라인 반환 (DOM 업데이트용)
+            res.json({
+                success: true,
+                isMultiline: true,
+                startLine: startIdx + 1,
+                restoredContent: lastAction.originalLines.join('\n')
+            });
         }
+        // 단일 라인 복원
+        else if (lastAction.originalLine !== undefined) {
+            lines[lastAction.lineIndex] = lastAction.originalLine;
 
-        fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
+            fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
 
-        res.json({
-            success: true,
-            line_number: (lastAction.startLineIndex || lastAction.lineIndex) + 1,
-            content: lines[(lastAction.startLineIndex || lastAction.lineIndex)]
-        });
+            res.json({
+                success: true,
+                line_number: lastAction.lineIndex + 1,
+                content: lines[lastAction.lineIndex]
+            });
+        } else {
+            res.status(400).json({ error: '잘못된 되돌리기 데이터입니다.' });
+        }
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

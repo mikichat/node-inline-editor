@@ -103,6 +103,16 @@
             box-shadow: 0 5px 20px rgba(136, 84, 208, 0.4);
         }
 
+        .btn-source {
+            background: linear-gradient(135deg, #00d9ff, #0099cc);
+            color: white;
+        }
+
+        .btn-source:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(0, 217, 255, 0.4);
+        }
+
         .editor-container {
             margin-top: 80px;
             padding: 40px;
@@ -111,33 +121,33 @@
         .content-frame {
             background: white;
             border-radius: 16px;
-            padding: 40px;
+            padding: 0;
             min-height: calc(100vh - 200px);
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
         }
 
+        /* 원본 HTML 스타일 격리 - 에디터 스타일 영향 제거 */
+        .content-frame * {
+            all: revert;
+        }
+
+        /* data-line 요소만 에디터 스타일 적용 */
         .content-frame [data-line] {
-            position: relative;
-            cursor: text;
-            padding: 4px 8px;
-            margin: 2px 0;
-            border-radius: 4px;
-            transition: all 0.2s ease;
-        }
-
-        .content-frame [data-line]:hover {
-            background: rgba(139, 92, 246, 0.1);
-            /* Violet Tint */
+            cursor: text !important;
+            outline: 2px solid transparent !important;
+            transition: outline 0.15s ease !important;
+            color: #1a1a1a !important;
         }
 
         .content-frame [data-line]:focus {
-            outline: 2px solid #8b5cf6;
-            /* Modern Violet */
-            background: rgba(139, 92, 246, 0.15);
+            outline: 2px dashed #8b5cf6 !important;
+            outline-offset: 2px !important;
+            /* 배경색 없음 - 원본 콘텐츠 색상 유지 */
         }
 
         .content-frame [data-line]::before {
-            content: none;
+            content: none !important;
         }
 
         /* 모달 스타일 */
@@ -290,6 +300,7 @@
             <span class="filename">📄 <%= filename %></span>
         </div>
         <div class="toolbar-right">
+            <button id="btnSource" class="btn btn-source">📝 소스편집</button>
             <button id="btnUndo" class="btn btn-undo">↩ 되돌리기</button>
             <button id="btnRestore" class="btn btn-restore">📁 복원</button>
         </div>
@@ -312,6 +323,69 @@
                 <ul class="backup-list" id="backupList">
                     <li class="no-backups">백업 목록을 불러오는 중...</li>
                 </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- 소스 편집 모달 -->
+    <div class="modal-overlay" id="sourceModal">
+        <div class="modal" style="max-width: 900px; width: 95%;">
+            <div class="modal-header">
+                <h2>📝 소스 편집</h2>
+                <button class="modal-close" id="sourceModalClose">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 0;">
+                <textarea id="sourceEditor" style="
+                    width: 100%;
+                    height: 60vh;
+                    background: #0d1117;
+                    color: #c9d1d9;
+                    border: none;
+                    padding: 20px;
+                    font-family: 'Consolas', 'Monaco', monospace;
+                    font-size: 14px;
+                    line-height: 1.5;
+                    resize: none;
+                    outline: none;
+                "></textarea>
+            </div>
+            <div
+                style="padding: 15px 25px; border-top: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: flex-end; gap: 10px;">
+                <button id="btnFormatSource" class="btn"
+                    style="background: linear-gradient(135deg, #a855f7, #7c3aed); color: white;">🔧 소스정렬</button>
+                <button id="btnSaveSource" class="btn"
+                    style="background: linear-gradient(135deg, #00ff88, #00cc6a); color: #1a1a2e;">💾 저장</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 멀티라인 에디터 팝업 -->
+    <div class="modal-overlay" id="multilineModal">
+        <div class="modal" style="max-width: 700px; width: 90%;">
+            <div class="modal-header">
+                <h2>✏️ 멀티라인 편집</h2>
+                <button class="modal-close" id="multilineModalClose">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 0;">
+                <textarea id="multilineEditor" style="
+                    width: 100%;
+                    height: 40vh;
+                    background: #0d1117;
+                    color: #c9d1d9;
+                    border: none;
+                    padding: 20px;
+                    font-family: 'Consolas', 'Monaco', monospace;
+                    font-size: 14px;
+                    line-height: 1.6;
+                    resize: none;
+                    outline: none;
+                "></textarea>
+            </div>
+            <div
+                style="padding: 15px 25px; border-top: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center;">
+                <span id="multilineLineInfo" style="color: #888; font-size: 0.9rem;"></span>
+                <button id="btnSaveMultiline" class="btn"
+                    style="background: linear-gradient(135deg, #00ff88, #00cc6a); color: #1a1a2e;">💾 저장</button>
             </div>
         </div>
     </div>
@@ -363,6 +437,13 @@
                 const text = e.clipboardData.getData('text/plain');
                 document.execCommand('insertText', false, text);
             });
+
+            // 더블클릭 시 멀티라인 편집 팝업 열기
+            el.addEventListener('dblclick', function (e) {
+                e.preventDefault();
+                const lineNumber = this.getAttribute('data-line');
+                openMultilineEditorForLine(lineNumber);
+            });
         });
 
         // 저장 API 호출
@@ -378,6 +459,9 @@
 
                 if (result.success) {
                     showToast('✓ 저장되었습니다');
+                } else if (result.isMultiline) {
+                    // 멀티라인 요소 - 팝업 에디터 열기
+                    openMultilineEditor(lineNumber, result.startLine, result.endLine, result.originalContent);
                 } else {
                     showToast(result.error || '저장 실패', true);
                 }
@@ -385,6 +469,76 @@
                 showToast('저장 중 오류 발생', true);
             }
         }
+
+        // 멀티라인 에디터 관련 변수
+        let currentMultilineInfo = null;
+
+        // 멀티라인 에디터 열기
+        function openMultilineEditor(lineNumber, startLine, endLine, content) {
+            currentMultilineInfo = { lineNumber, startLine, endLine };
+            document.getElementById('multilineEditor').value = content;
+            document.getElementById('multilineLineInfo').textContent = `라인 ${startLine} ~ ${endLine}`;
+            document.getElementById('multilineModal').classList.add('active');
+            showToast('멀티라인 편집 모드로 전환되었습니다.', false);
+        }
+
+        // 더블클릭으로 멀티라인 에디터 열기 (라인 정보 조회 후)
+        async function openMultilineEditorForLine(lineNumber) {
+            try {
+                const response = await fetch(`/line-info?filename=${filename}&line=${lineNumber}`);
+                const result = await response.json();
+
+                if (result.success) {
+                    openMultilineEditor(lineNumber, result.startLine, result.endLine, result.content);
+                } else {
+                    showToast(result.error || '라인 정보를 가져올 수 없습니다.', true);
+                }
+            } catch (err) {
+                showToast('라인 정보 조회 중 오류 발생', true);
+            }
+        }
+
+        // 멀티라인 에디터 닫기
+        document.getElementById('multilineModalClose').addEventListener('click', function () {
+            document.getElementById('multilineModal').classList.remove('active');
+            currentMultilineInfo = null;
+        });
+
+        document.getElementById('multilineModal').addEventListener('click', function (e) {
+            if (e.target === this) {
+                this.classList.remove('active');
+                currentMultilineInfo = null;
+            }
+        });
+
+        // 멀티라인 저장
+        document.getElementById('btnSaveMultiline').addEventListener('click', async function () {
+            if (!currentMultilineInfo) return;
+
+            const content = document.getElementById('multilineEditor').value;
+            try {
+                const response = await fetch('/save-multiline', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        filename,
+                        startLine: currentMultilineInfo.startLine,
+                        endLine: currentMultilineInfo.endLine,
+                        content
+                    })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    document.getElementById('multilineModal').classList.remove('active');
+                    showToast('✓ 멀티라인 저장 완료. 페이지를 새로고침합니다.');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast(result.error || '저장 실패', true);
+                }
+            } catch (err) {
+                showToast('저장 중 오류 발생', true);
+            }
+        });
 
         // 되돌리기
         document.getElementById('btnUndo').addEventListener('click', async function () {
@@ -397,15 +551,27 @@
                 const result = await response.json();
 
                 if (result.success) {
-                    // 해당 라인 요소 찾아서 업데이트
-                    const el = document.querySelector(`[data-line="${result.line_number}"]`);
-                    if (el) {
-                        // 태그 사이의 텍스트만 추출해서 표시
-                        const temp = document.createElement('div');
-                        temp.innerHTML = result.content;
-                        el.textContent = temp.textContent;
+                    // 멀티라인 되돌리기의 경우 시작 라인 요소 업데이트
+                    if (result.isMultiline) {
+                        const el = document.querySelector(`[data-line="${result.startLine}"]`);
+                        if (el) {
+                            // 복원된 내용에서 텍스트만 추출해서 표시
+                            const temp = document.createElement('div');
+                            temp.innerHTML = result.restoredContent;
+                            el.innerHTML = temp.innerHTML;
+                        }
+                        showToast('↩ 멀티라인 되돌리기 완료');
+                    } else {
+                        // 해당 라인 요소 찾아서 업데이트
+                        const el = document.querySelector(`[data-line="${result.line_number}"]`);
+                        if (el) {
+                            // 태그 사이의 텍스트만 추출해서 표시
+                            const temp = document.createElement('div');
+                            temp.innerHTML = result.content;
+                            el.textContent = temp.textContent;
+                        }
+                        showToast('↩ 되돌리기 완료');
                     }
-                    showToast('↩ 되돌리기 완료');
                 } else {
                     showToast(result.error || '되돌릴 기록이 없습니다', true);
                 }
@@ -428,6 +594,76 @@
         document.getElementById('restoreModal').addEventListener('click', function (e) {
             if (e.target === this) {
                 this.classList.remove('active');
+            }
+        });
+
+        // 소스 편집 모달 열기
+        document.getElementById('btnSource').addEventListener('click', async function () {
+            try {
+                const response = await fetch(`/source?filename=${encodeURIComponent(filename)}`);
+                const result = await response.json();
+                if (result.content) {
+                    document.getElementById('sourceEditor').value = result.content;
+                    document.getElementById('sourceModal').classList.add('active');
+                } else {
+                    showToast('소스를 불러올 수 없습니다', true);
+                }
+            } catch (err) {
+                showToast('소스 로드 중 오류 발생', true);
+            }
+        });
+
+        // 소스 편집 모달 닫기
+        document.getElementById('sourceModalClose').addEventListener('click', function () {
+            document.getElementById('sourceModal').classList.remove('active');
+        });
+
+        document.getElementById('sourceModal').addEventListener('click', function (e) {
+            if (e.target === this) {
+                this.classList.remove('active');
+            }
+        });
+
+        // 소스 저장
+        document.getElementById('btnSaveSource').addEventListener('click', async function () {
+            const content = document.getElementById('sourceEditor').value;
+            try {
+                const response = await fetch('/save-source', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename, content })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    document.getElementById('sourceModal').classList.remove('active');
+                    showToast('✓ 소스가 저장되었습니다. 페이지를 새로고침합니다.');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast(result.error || '저장 실패', true);
+                }
+            } catch (err) {
+                showToast('저장 중 오류 발생', true);
+            }
+        });
+
+        // 소스 정렬 (beautify)
+        document.getElementById('btnFormatSource').addEventListener('click', async function () {
+            const content = document.getElementById('sourceEditor').value;
+            try {
+                const response = await fetch('/format-source', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    document.getElementById('sourceEditor').value = result.formattedContent;
+                    showToast('✓ 소스가 정렬되었습니다');
+                } else {
+                    showToast(result.error || '정렬 실패', true);
+                }
+            } catch (err) {
+                showToast('정렬 중 오류 발생', true);
             }
         });
 

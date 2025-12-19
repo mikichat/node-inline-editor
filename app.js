@@ -1,26 +1,85 @@
+require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
 const beautify = require('js-beautify').html;
 
 const app = express();
-const PORT = 3000;
-const PUBLIC_DIR = path.join(__dirname, 'public');
+const PORT = process.env.PORT || 3000;
+const PUBLIC_DIR = process.env.PUBLIC_DIR 
+    ? path.resolve(process.env.PUBLIC_DIR) 
+    : path.join(__dirname, 'public');
 const BACKUP_DIR = path.join(__dirname, 'backup');
 
-// 미들웨어 설정
+// ================================
+// 보안 미들웨어 설정
+// ================================
+
+// Helmet: HTTP 보안 헤더 설정
+app.use(helmet({
+    contentSecurityPolicy: false // 인라인 스크립트 허용을 위해 비활성화
+}));
+
+// Rate Limiting: 요청 제한 (DoS 방지)
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15분
+    max: 200, // 최대 200회 요청
+    message: { error: '너무 많은 요청입니다. 잠시 후 다시 시도해주세요.' }
+});
+app.use(limiter);
+
+// 뷰 엔진 설정
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(PUBLIC_DIR));
 
+// 세션 설정 (보안 강화)
 app.use(session({
-    secret: 'inline-html-editor-secret-key',
+    secret: process.env.SESSION_SECRET || 'inline-html-editor-secret-key-change-in-production',
     resave: false,
-    saveUninitialized: true
+    saveUninitialized: false,
+    cookie: {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: 3600000, // 1시간
+        sameSite: 'strict'
+    }
 }));
+
+// ================================
+// 보안 헬퍼 함수
+// ================================
+
+// Path Traversal 방지: 경로가 허용된 디렉토리 내에 있는지 확인
+function isPathSafe(filename, baseDir = PUBLIC_DIR) {
+    if (!filename || typeof filename !== 'string') {
+        return false;
+    }
+    // 널 바이트 공격 방지
+    if (filename.includes('\0')) {
+        return false;
+    }
+    const normalized = path.normalize(filename);
+    const fullPath = path.join(baseDir, normalized);
+    const resolvedBase = path.resolve(baseDir);
+    const resolvedPath = path.resolve(fullPath);
+    return resolvedPath.startsWith(resolvedBase + path.sep) || resolvedPath === resolvedBase;
+}
+
+// 파일명 유효성 검사
+function isValidFilename(filename) {
+    if (!filename || typeof filename !== 'string') {
+        return false;
+    }
+    // HTML 파일만 허용, 특수문자 제한
+    const validPattern = /^[a-zA-Z0-9가-힣_\-\/\\]+\.html$/;
+    return validPattern.test(filename) && !filename.includes('..');
+}
 
 // 디렉토리 생성 헬퍼
 function ensureDir(dirPath) {
@@ -262,6 +321,11 @@ app.get('/editor', (req, res) => {
         return res.status(400).send('파일명이 필요합니다.');
     }
 
+    // 보안: Path Traversal 방지
+    if (!isPathSafe(filename)) {
+        return res.status(403).send('접근이 거부되었습니다.');
+    }
+
     const filePath = path.join(PUBLIC_DIR, filename);
 
     if (!fs.existsSync(filePath)) {
@@ -284,6 +348,11 @@ app.get('/source', (req, res) => {
 
     if (!filename) {
         return res.status(400).json({ error: '파일명이 필요합니다.' });
+    }
+
+    // 보안: Path Traversal 방지
+    if (!isPathSafe(filename)) {
+        return res.status(403).json({ error: '접근이 거부되었습니다.' });
     }
 
     const filePath = path.join(PUBLIC_DIR, filename);
@@ -328,6 +397,11 @@ app.get('/line-info', (req, res) => {
 
     if (!filename || !line) {
         return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
+    }
+
+    // 보안: Path Traversal 방지
+    if (!isPathSafe(filename)) {
+        return res.status(403).json({ error: '접근이 거부되었습니다.' });
     }
 
     const filePath = path.join(PUBLIC_DIR, filename);
@@ -380,6 +454,11 @@ app.post('/save-source', (req, res) => {
         return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
     }
 
+    // 보안: Path Traversal 방지
+    if (!isPathSafe(filename)) {
+        return res.status(403).json({ error: '접근이 거부되었습니다.' });
+    }
+
     const filePath = path.join(PUBLIC_DIR, filename);
 
     if (!fs.existsSync(filePath)) {
@@ -421,6 +500,11 @@ app.post('/save-multiline', (req, res) => {
 
     if (!filename || !startLine || !endLine || content === undefined) {
         return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
+    }
+
+    // 보안: Path Traversal 방지
+    if (!isPathSafe(filename)) {
+        return res.status(403).json({ error: '접근이 거부되었습니다.' });
     }
 
     const filePath = path.join(PUBLIC_DIR, filename);
@@ -498,6 +582,11 @@ app.post('/save', (req, res) => {
 
     if (!filename || !line_number || content === undefined) {
         return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
+    }
+
+    // 보안: Path Traversal 방지
+    if (!isPathSafe(filename)) {
+        return res.status(403).json({ error: '접근이 거부되었습니다.' });
     }
 
     const filePath = path.join(PUBLIC_DIR, filename);
@@ -647,6 +736,11 @@ app.get('/backups', (req, res) => {
         return res.status(400).json({ error: '파일명이 필요합니다.' });
     }
 
+    // 보안: Path Traversal 방지
+    if (!isPathSafe(filename)) {
+        return res.status(403).json({ error: '접근이 거부되었습니다.' });
+    }
+
     const backupFolderName = getBackupFolderName(filename);
     const backupFileDir = path.join(BACKUP_DIR, backupFolderName);
 
@@ -687,6 +781,11 @@ app.post('/restore', (req, res) => {
 
     if (!filename || !backupFile) {
         return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
+    }
+
+    // 보안: Path Traversal 방지
+    if (!isPathSafe(filename)) {
+        return res.status(403).json({ error: '접근이 거부되었습니다.' });
     }
 
     const backupFolderName = getBackupFolderName(filename);

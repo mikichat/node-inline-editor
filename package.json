@@ -4,6 +4,7 @@
   "description": "웹 기반 인라인 HTML 텍스트 에디터",
   "main": "app.js",
   "scripts": {
+    "prestart": "node scripts/kill-port.js",
     "start": "node app.js",
     "dev": "node app.js"
   },

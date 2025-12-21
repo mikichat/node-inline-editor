@@ -844,6 +844,28 @@
             }
         }
     </script>
+    <script>
+        // 유휴 시간 자동 로그아웃 (10분)
+        (function () {
+            let idleTimer;
+            const idleLimit = 10 * 60 * 1000; // 10분
+
+            function resetTimer() {
+                clearTimeout(idleTimer);
+                idleTimer = setTimeout(() => {
+                    alert('10분간 활동이 없어 보안을 위해 자동 로그아웃되었습니다.');
+                    window.location.href = '/logout';
+                }, idleLimit);
+            }
+
+            // 활동 감지 이벤트
+            window.onload = resetTimer;
+            document.onmousemove = resetTimer;
+            document.onkeydown = resetTimer;
+            document.onclick = resetTimer;
+            document.onscroll = resetTimer;
+        })();
+    </script>
 </body>
 
 </html>

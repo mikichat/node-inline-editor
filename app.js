@@ -42,12 +42,13 @@ app.use(express.static(PUBLIC_DIR));
 // 세션 설정 (보안 강화)
 app.use(session({
     secret: process.env.SESSION_SECRET || 'inline-html-editor-secret-key-change-in-production',
-    resave: false,
+    resave: true, // rolling 사용 시 true 권장
     saveUninitialized: false,
+    rolling: true, // 활동 시 세션 만료 시간 갱신
     cookie: {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        maxAge: 3600000, // 1시간
+        maxAge: 600000, // 10분
         sameSite: 'strict'
     }
 }));

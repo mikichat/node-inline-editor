@@ -15,6 +15,12 @@ const PUBLIC_DIR = process.env.PUBLIC_DIR
 const BACKUP_DIR = path.join(__dirname, 'backup');
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin1234';
 
+// 허용된 확장자 설정 (기본값: html)
+const ALLOWED_EXTENSIONS = (process.env.ALLOWED_EXTENSIONS || 'html')
+    .split(',')
+    .map(ext => ext.trim().toLowerCase())
+    .filter(ext => ext.length > 0);
+
 // ================================
 // 보안 미들웨어 설정
 // ================================
@@ -91,9 +97,21 @@ function isValidFilename(filename) {
     if (!filename || typeof filename !== 'string') {
         return false;
     }
-    // HTML 파일만 허용, 특수문자 제한
-    const validPattern = /^[a-zA-Z0-9가-힣_\-\/\\]+\.html$/;
-    return validPattern.test(filename) && !filename.includes('..');
+
+    // 점유 중인 확장자 확인
+    const ext = path.extname(filename).toLowerCase().replace('.', '');
+    if (!ALLOWED_EXTENSIONS.includes(ext)) {
+        return false;
+    }
+
+    // 기본 보안 체크 (특수문자 제한 및 상위 디렉토리 접근 차단)
+    return !filename.includes('..') && /^[a-zA-Z0-9가-힣_\-\/\. ]+$/.test(filename);
+}
+
+// 확장자 체크 헬퍼
+function isAllowedExtension(filename) {
+    const ext = path.extname(filename).toLowerCase().replace('.', '');
+    return ALLOWED_EXTENSIONS.includes(ext);
 }
 
 // 디렉토리 생성 헬퍼
@@ -104,10 +122,13 @@ function ensureDir(dirPath) {
 }
 
 // 파일 경로를 고유한 백업 폴더명으로 변환
-// 예: test.html -> test, a/test.html -> a__test
 function getBackupFolderName(filename) {
-    // .html 확장자 제거
-    const withoutExt = filename.replace(/\.html$/i, '');
+    // 모든 허용된 확장자 제거
+    let withoutExt = filename;
+    ALLOWED_EXTENSIONS.forEach(ext => {
+        const regex = new RegExp(`\\.${ext}$`, 'i');
+        withoutExt = withoutExt.replace(regex, '');
+    });
     // 경로 구분자(/ 또는 \)를 __로 변환
     return withoutExt.replace(/[\/\\]/g, '__');
 }
@@ -357,7 +378,7 @@ app.get('/', isAuthenticated, (req, res) => {
     ensureDir(PUBLIC_DIR);
 
     const files = fs.readdirSync(PUBLIC_DIR)
-        .filter(file => file.endsWith('.html'))
+        .filter(file => isAllowedExtension(file))
         .map(file => ({
             name: file,
             size: fs.statSync(path.join(PUBLIC_DIR, file)).size,
@@ -375,9 +396,9 @@ app.get('/editor', isAuthenticated, (req, res) => {
         return res.status(400).send('파일명이 필요합니다.');
     }
 
-    // 보안: Path Traversal 방지
-    if (!isPathSafe(filename)) {
-        return res.status(403).send('접근이 거부되었습니다.');
+    // 보안: Path Traversal 방지 및 확장자 체크
+    if (!isPathSafe(filename) || !isAllowedExtension(filename)) {
+        return res.status(403).send('접근이 거부되었습니다. 허용되지 않은 파일 형식입니다.');
     }
 
     const filePath = path.join(PUBLIC_DIR, filename);
@@ -404,9 +425,9 @@ app.get('/source', isAuthenticated, (req, res) => {
         return res.status(400).json({ error: '파일명이 필요합니다.' });
     }
 
-    // 보안: Path Traversal 방지
-    if (!isPathSafe(filename)) {
-        return res.status(403).json({ error: '접근이 거부되었습니다.' });
+    // 보안: Path Traversal 방지 및 확장자 체크
+    if (!isPathSafe(filename) || !isAllowedExtension(filename)) {
+        return res.status(403).json({ error: '접근이 거부되었습니다. 허용되지 않은 파일 형식입니다.' });
     }
 
     const filePath = path.join(PUBLIC_DIR, filename);
@@ -453,9 +474,9 @@ app.get('/line-info', isAuthenticated, (req, res) => {
         return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
     }
 
-    // 보안: Path Traversal 방지
-    if (!isPathSafe(filename)) {
-        return res.status(403).json({ error: '접근이 거부되었습니다.' });
+    // 보안: Path Traversal 방지 및 확장자 체크
+    if (!isPathSafe(filename) || !isAllowedExtension(filename)) {
+        return res.status(403).json({ error: '접근이 거부되었습니다. 허용되지 않은 파일 형식입니다.' });
     }
 
     const filePath = path.join(PUBLIC_DIR, filename);
@@ -508,9 +529,9 @@ app.post('/save-source', isAuthenticated, (req, res) => {
         return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
     }
 
-    // 보안: Path Traversal 방지
-    if (!isPathSafe(filename)) {
-        return res.status(403).json({ error: '접근이 거부되었습니다.' });
+    // 보안: Path Traversal 방지 및 확장자 체크
+    if (!isPathSafe(filename) || !isAllowedExtension(filename)) {
+        return res.status(403).json({ error: '접근이 거부되었습니다. 허용되지 않은 파일 형식입니다.' });
     }
 
     const filePath = path.join(PUBLIC_DIR, filename);
@@ -527,7 +548,8 @@ app.post('/save-source', isAuthenticated, (req, res) => {
         ensureDir(backupFileDir);
 
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const backupPath = path.join(backupFileDir, `${timestamp}_source-edit.html`);
+        const ext = path.extname(filename);
+        const backupPath = path.join(backupFileDir, `${timestamp}_source-edit${ext}`);
 
         // 현재 파일 백업
         const currentContent = fs.readFileSync(filePath, 'utf-8');
@@ -536,8 +558,8 @@ app.post('/save-source', isAuthenticated, (req, res) => {
         // 새 내용 저장
         fs.writeFileSync(filePath, content, 'utf-8');
 
-        // last.html 업데이트
-        const lastBackupPath = path.join(backupFileDir, 'last.html');
+        // 백업 업데이트 (항상 최신 상태 유지)
+        const lastBackupPath = path.join(backupFileDir, `last${ext}`);
         fs.writeFileSync(lastBackupPath, content, 'utf-8');
 
         console.log('[DEBUG] Source saved successfully');
@@ -556,9 +578,9 @@ app.post('/save-multiline', isAuthenticated, (req, res) => {
         return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
     }
 
-    // 보안: Path Traversal 방지
-    if (!isPathSafe(filename)) {
-        return res.status(403).json({ error: '접근이 거부되었습니다.' });
+    // 보안: Path Traversal 방지 및 확장자 체크
+    if (!isPathSafe(filename) || !isAllowedExtension(filename)) {
+        return res.status(403).json({ error: '접근이 거부되었습니다. 허용되지 않은 파일 형식입니다.' });
     }
 
     const filePath = path.join(PUBLIC_DIR, filename);
@@ -585,7 +607,8 @@ app.post('/save-multiline', isAuthenticated, (req, res) => {
         ensureDir(backupFileDir);
 
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const backupPath = path.join(backupFileDir, `${timestamp}_multiline-edit.html`);
+        const ext = path.extname(filename);
+        const backupPath = path.join(backupFileDir, `${timestamp}_multiline-edit${ext}`);
         fs.writeFileSync(backupPath, fileContent, 'utf-8');
 
         // 에디터 속성 제거
@@ -604,8 +627,8 @@ app.post('/save-multiline', isAuthenticated, (req, res) => {
         const newFileContent = lines.join('\n');
         fs.writeFileSync(filePath, newFileContent, 'utf-8');
 
-        // last.html 업데이트
-        const lastBackupPath = path.join(backupFileDir, 'last.html');
+        // 백업 업데이트
+        const lastBackupPath = path.join(backupFileDir, `last${ext}`);
         fs.writeFileSync(lastBackupPath, newFileContent, 'utf-8');
 
         // Undo 히스토리 저장 (멀티라인 복원용)
@@ -638,9 +661,9 @@ app.post('/save', isAuthenticated, (req, res) => {
         return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
     }
 
-    // 보안: Path Traversal 방지
-    if (!isPathSafe(filename)) {
-        return res.status(403).json({ error: '접근이 거부되었습니다.' });
+    // 보안: Path Traversal 방지 및 확장자 체크
+    if (!isPathSafe(filename) || !isAllowedExtension(filename)) {
+        return res.status(403).json({ error: '접근이 거부되었습니다. 허용되지 않은 파일 형식입니다.' });
     }
 
     const filePath = path.join(PUBLIC_DIR, filename);
@@ -664,8 +687,9 @@ app.post('/save', isAuthenticated, (req, res) => {
         const backupFileDir = path.join(BACKUP_DIR, backupFolderName, today);
         ensureDir(backupFileDir);
 
-        const firstBackupPath = path.join(backupFileDir, '00_first.html');
-        const lastBackupPath = path.join(backupFileDir, 'last.html');
+        const ext = path.extname(filename);
+        const firstBackupPath = path.join(backupFileDir, `00_first${ext}`);
+        const lastBackupPath = path.join(backupFileDir, `last${ext}`);
         let backupPath;
 
         // 그날 첫 백업인지 확인
@@ -768,7 +792,7 @@ app.post('/save', isAuthenticated, (req, res) => {
         fs.writeFileSync(filePath, newContent, 'utf-8');
         console.log('[DEBUG] File saved successfully');
 
-        // last.html 업데이트 (항상 최신 상태 유지)
+        // 백업 업데이트 (항상 최신 상태 유지)
         fs.writeFileSync(lastBackupPath, newContent, 'utf-8');
 
         res.json({
@@ -790,9 +814,9 @@ app.get('/backups', isAuthenticated, (req, res) => {
         return res.status(400).json({ error: '파일명이 필요합니다.' });
     }
 
-    // 보안: Path Traversal 방지
-    if (!isPathSafe(filename)) {
-        return res.status(403).json({ error: '접근이 거부되었습니다.' });
+    // 보안: Path Traversal 방지 및 확장자 체크
+    if (!isPathSafe(filename) || !isAllowedExtension(filename)) {
+        return res.status(403).json({ error: '접근이 거부되었습니다. 허용되지 않은 파일 형식입니다.' });
     }
 
     const backupFolderName = getBackupFolderName(filename);
@@ -819,7 +843,7 @@ app.get('/backups', isAuthenticated, (req, res) => {
             backups.push({
                 name: `${dateFolder}/${file}`,
                 date: dateFolder,
-                type: file.endsWith('.html') ? 'snapshot' : 'diff',
+                type: file.endsWith('.json') ? 'diff' : 'snapshot',
                 mtime: stat.mtime
             });
         }
@@ -837,9 +861,9 @@ app.post('/restore', isAuthenticated, (req, res) => {
         return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
     }
 
-    // 보안: Path Traversal 방지
-    if (!isPathSafe(filename)) {
-        return res.status(403).json({ error: '접근이 거부되었습니다.' });
+    // 보안: Path Traversal 방지 및 확장자 체크
+    if (!isPathSafe(filename) || !isAllowedExtension(filename)) {
+        return res.status(403).json({ error: '접근이 거부되었습니다. 허용되지 않은 파일 형식입니다.' });
     }
 
     const backupFolderName = getBackupFolderName(filename);
@@ -859,26 +883,27 @@ app.post('/restore', isAuthenticated, (req, res) => {
         ensureDir(todayBackupDir);
 
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const preRestoreBackup = path.join(todayBackupDir, `${timestamp}_pre-restore.html`);
+        const ext = path.extname(filename);
+        const preRestoreBackup = path.join(todayBackupDir, `${timestamp}_pre-restore${ext}`);
         fs.writeFileSync(preRestoreBackup, currentContent, 'utf-8');
 
         let restoredContent;
 
         if (backupFile.endsWith('.json')) {
-            // Diff 파일로 복원: 00_first.html + diff 순차 적용
+            // Diff 파일로 복원: 00_first + diff 순차 적용
             const parts = backupFile.split('/');
             const dateFolder = parts[0];
             const targetDiff = parts[1]; // 예: "02_diff.json"
             const targetNum = parseInt(targetDiff.split('_')[0]); // 예: 2
 
             const dayDir = path.join(BACKUP_DIR, backupFolderName, dateFolder);
-            const firstPath = path.join(dayDir, '00_first.html');
+            const firstPath = path.join(dayDir, `00_first${ext}`);
 
             if (!fs.existsSync(firstPath)) {
-                return res.status(400).json({ error: '원본 파일(00_first.html)이 없어 diff 복원이 불가능합니다.' });
+                return res.status(400).json({ error: `원본 파일(00_first${ext})이 없어 diff 복원이 불가능합니다.` });
             }
 
-            // 00_first.html 로드
+            // 원본 로드
             restoredContent = fs.readFileSync(firstPath, 'utf-8');
 
             // diff 파일들을 순차적으로 적용 (01 ~ targetNum)
@@ -904,7 +929,7 @@ app.post('/restore', isAuthenticated, (req, res) => {
 
             console.log(`[DEBUG] Restored via diff: applied ${targetNum} diffs`);
         } else {
-            // 스냅샷 파일로 복원 (00_first.html, last.html 등)
+            // 스냅샷 파일로 복원 (00_first, last 등)
             restoredContent = fs.readFileSync(backupPath, 'utf-8');
         }
 

@@ -123,14 +123,9 @@ function ensureDir(dirPath) {
 
 // 파일 경로를 고유한 백업 폴더명으로 변환
 function getBackupFolderName(filename) {
-    // 모든 허용된 확장자 제거
-    let withoutExt = filename;
-    ALLOWED_EXTENSIONS.forEach(ext => {
-        const regex = new RegExp(`\\.${ext}$`, 'i');
-        withoutExt = withoutExt.replace(regex, '');
-    });
+    // 확장자를 포함한 전체 파일명에서 점(.)을 언더바(_)로 변환
     // 경로 구분자(/ 또는 \)를 __로 변환
-    return withoutExt.replace(/[\/\\]/g, '__');
+    return filename.replace(/\./g, '_').replace(/[\/\\]/g, '__');
 }
 
 /**
@@ -849,6 +844,13 @@ app.get('/backups', isAuthenticated, (req, res) => {
         }
     }
 
+    // 최신순 정렬 (수정 시간 기준)
+    backups.sort((a, b) => {
+        const timeA = new Date(a.mtime).getTime();
+        const timeB = new Date(b.mtime).getTime();
+        return timeB - timeA;
+    });
+
     // 날짜별로 그룹핑된 형태로 반환
     res.json({ backups });
 });
@@ -941,6 +943,43 @@ app.post('/restore', isAuthenticated, (req, res) => {
             message: '복원되었습니다.',
             content: injectLineNumbers(restoredContent)
         });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 백업 내용 조회 API (미리보기용)
+app.get('/backup-content', isAuthenticated, (req, res) => {
+    const { filename, backupFile } = req.query;
+
+    if (!filename || !backupFile) {
+        return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
+    }
+
+    // 보안: Path Traversal 방지 및 확장자 체크
+    if (!isPathSafe(filename) || !isAllowedExtension(filename)) {
+        return res.status(403).json({ error: '접근이 거부되었습니다. 허용되지 않은 파일 형식입니다.' });
+    }
+
+    const backupFolderName = getBackupFolderName(filename);
+    const backupPath = path.join(BACKUP_DIR, backupFolderName, backupFile);
+
+    if (!fs.existsSync(backupPath)) {
+        return res.status(404).json({ error: '백업 파일을 찾을 수 없습니다.' });
+    }
+
+    try {
+        let content;
+        if (backupFile.endsWith('.json')) {
+            // Diff 파일 정보 반환
+            const diffData = JSON.parse(fs.readFileSync(backupPath, 'utf-8'));
+            content = `[Diff 정보]\n라인: ${diffData.lineNumber}\n\n[변경 전]\n${diffData.before}\n\n[변경 후]\n${diffData.after}`;
+        } else {
+            // 스냅샷 파일 내용 반환
+            content = fs.readFileSync(backupPath, 'utf-8');
+        }
+
+        res.json({ success: true, content });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

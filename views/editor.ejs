@@ -260,6 +260,22 @@
             box-shadow: 0 4px 15px rgba(0, 217, 255, 0.4);
         }
 
+        .btn-preview-item {
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: #fff;
+            font-weight: 500;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-preview-item:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
         .no-backups {
             text-align: center;
             color: #666;
@@ -326,6 +342,35 @@
                 <ul class="backup-list" id="backupList">
                     <li class="no-backups">백업 목록을 불러오는 중...</li>
                 </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- 백업 미리보기 모달 -->
+    <div class="modal-overlay" id="previewModal">
+        <div class="modal" style="max-width: 800px; width: 90%;">
+            <div class="modal-header">
+                <h2>🔍 백업 미리보기</h2>
+                <button class="modal-close" id="previewModalClose">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 0;">
+                <textarea id="previewArea" readonly style="
+                    width: 100%;
+                    height: 50vh;
+                    background: #0d1117;
+                    color: #c9d1d9;
+                    border: none;
+                    padding: 20px;
+                    font-family: 'Consolas', 'Monaco', monospace;
+                    font-size: 14px;
+                    line-height: 1.5;
+                    resize: none;
+                    outline: none;
+                "></textarea>
+            </div>
+            <div
+                style="padding: 15px 25px; border-top: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: flex-end;">
+                <button class="btn btn-restore" id="btnRestoreFromPreview" style="padding: 8px 20px;">이 시점으로 복원</button>
             </div>
         </div>
     </div>
@@ -806,7 +851,10 @@
                                 <div>${backup.name}</div>
                                 <div class="backup-time">${new Date(backup.mtime).toLocaleString('ko-KR')}</div>
                             </div>
-                            <button class="btn-restore-item" onclick="restoreBackup('${backup.name}')">복원</button>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn-preview-item" onclick="previewBackup('${backup.name}')">내용 보기</button>
+                                <button class="btn-restore-item" onclick="restoreBackup('${backup.name}')">복원</button>
+                            </div>
                         </li>
                     `).join('');
                 } else {
@@ -816,6 +864,39 @@
                 listEl.innerHTML = '<li class="no-backups">백업 목록을 불러올 수 없습니다.</li>';
             }
         }
+
+        let pendingRestoreFile = null;
+
+        // 백업 내용 미리보기
+        async function previewBackup(backupFile) {
+            try {
+                const response = await fetch(`/backup-content?filename=${encodeURIComponent(filename)}&backupFile=${encodeURIComponent(backupFile)}`);
+                const result = await response.json();
+
+                if (result.success) {
+                    pendingRestoreFile = backupFile;
+                    document.getElementById('previewArea').value = result.content;
+                    document.getElementById('previewModal').classList.add('active');
+                } else {
+                    showToast(result.error || '내용을 불러올 수 없습니다.', true);
+                }
+            } catch (err) {
+                showToast('미리보기 로드 중 오류 발생', true);
+            }
+        }
+
+        // 미리보기 모달 닫기
+        document.getElementById('previewModalClose').addEventListener('click', function () {
+            document.getElementById('previewModal').classList.remove('active');
+            pendingRestoreFile = null;
+        });
+
+        // 미리보기에서 바로 복원
+        document.getElementById('btnRestoreFromPreview').addEventListener('click', function () {
+            if (pendingRestoreFile) {
+                restoreBackup(pendingRestoreFile);
+            }
+        });
 
         // 백업에서 복원
         async function restoreBackup(backupFile) {

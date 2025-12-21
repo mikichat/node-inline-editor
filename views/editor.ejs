@@ -191,6 +191,7 @@
             font-size: 1.3rem;
             background: linear-gradient(90deg, #a55eea, #8854d0);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
         }
 
@@ -298,6 +299,8 @@
         <div class="toolbar-left">
             <a href="/" class="btn-back">← 목록으로</a>
             <span class="filename">📄 <%= filename %></span>
+            <a href="/logout" style="color: #ff6b6b; text-decoration: none; font-size: 0.85rem; margin-left: 20px;">🔒
+                로그아웃</a>
         </div>
         <div class="toolbar-right">
             <button id="btnSource" class="btn btn-source">📝 소스편집</button>
@@ -390,6 +393,36 @@
         </div>
     </div>
 
+    <!-- 이미지/링크 편집 모달 -->
+    <div class="modal-overlay" id="attrModal">
+        <div class="modal" style="max-width: 500px; width: 90%;">
+            <div class="modal-header">
+                <h2 id="attrModalTitle">🔗 링크/이미지 수정</h2>
+                <button class="modal-close" id="attrModalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 20px;">
+                    <label id="attrLabel"
+                        style="display: block; margin-bottom: 10px; color: #aaa; font-size: 0.9rem;">URL</label>
+                    <input type="text" id="attrValue" style="
+                        width: 100%;
+                        padding: 12px;
+                        background: rgba(255,255,255,0.05);
+                        border: 1px solid rgba(255,255,255,0.1);
+                        border-radius: 8px;
+                        color: white;
+                        outline: none;
+                    ">
+                </div>
+            </div>
+            <div
+                style="padding: 15px 25px; border-top: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: flex-end;">
+                <button id="btnSaveAttr" class="btn"
+                    style="background: linear-gradient(135deg, #00ff88, #00cc6a); color: #1a1a2e;">💾 반영</button>
+            </div>
+        </div>
+    </div>
+
     <div class="toast" id="toast"></div>
 
     <script>
@@ -444,6 +477,96 @@
                 const lineNumber = this.getAttribute('data-line');
                 openMultilineEditorForLine(lineNumber);
             });
+        });
+
+        // 이미지 및 링크 클릭 이벤트 위임
+        document.getElementById('contentFrame').addEventListener('click', function (e) {
+            const target = e.target;
+
+            // a 태그 클릭 시 기본 동작(이동) 방지하고 속성 수정 열기
+            if (target.tagName === 'A') {
+                e.preventDefault();
+                openAttrEditor(target, 'href', '🔗 링크 URL 수정');
+            }
+
+            // img 태그 클릭 시 속성 수정 열기
+            if (target.tagName === 'IMG') {
+                e.preventDefault();
+                openAttrEditor(target, 'src', '🖼️ 이미지 경로 수정');
+            }
+        });
+
+        let currentAttrTarget = null;
+        let currentAttrType = '';
+
+        function openAttrEditor(element, attr, title) {
+            currentAttrTarget = element;
+            currentAttrType = attr;
+            document.getElementById('attrModalTitle').textContent = title;
+            document.getElementById('attrLabel').textContent = attr.toUpperCase();
+            document.getElementById('attrValue').value = element.getAttribute(attr) || '';
+            document.getElementById('attrModal').classList.add('active');
+            document.getElementById('attrValue').focus();
+        }
+
+        document.getElementById('attrModalClose').addEventListener('click', () => {
+            document.getElementById('attrModal').classList.remove('active');
+        });
+
+        document.getElementById('btnSaveAttr').addEventListener('click', async function () {
+            if (!currentAttrTarget) return;
+
+            const newValue = document.getElementById('attrValue').value;
+            const oldValue = currentAttrTarget.getAttribute(currentAttrType);
+
+            if (newValue !== oldValue) {
+                currentAttrTarget.setAttribute(currentAttrType, newValue);
+
+                // 해당 요소가 data-line을 가지고 있다면 바로 저장 시도
+                const parentWithLine = currentAttrTarget.closest('[data-line]');
+                if (parentWithLine) {
+                    const lineNumber = parentWithLine.getAttribute('data-line');
+                    saveContent(lineNumber, parentWithLine.innerHTML);
+                } else {
+                    showToast('요소가 수정되었습니다. 상위 요소를 저장해야 반영됩니다.', false);
+                }
+            }
+
+            document.getElementById('attrModal').classList.remove('active');
+        });
+
+        // 단축키 설정
+        window.addEventListener('keydown', function (e) {
+            // Ctrl + S (저장)
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                e.preventDefault();
+                const focused = document.activeElement;
+                if (focused && focused.hasAttribute('data-line')) {
+                    focused.blur(); // blur 이벤트가 saveContent를 트리거함
+                } else if (document.getElementById('sourceModal').classList.contains('active')) {
+                    document.getElementById('btnSaveSource').click();
+                } else if (document.getElementById('multilineModal').classList.contains('active')) {
+                    document.getElementById('btnSaveMultiline').click();
+                } else {
+                    showToast('수정 중인 요소가 없습니다.', false);
+                }
+            }
+
+            // Ctrl + Z (되돌리기)
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                if (!['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+                    e.preventDefault();
+                    document.getElementById('btnUndo').click();
+                }
+            }
+
+            // Ctrl + B (Beautify - 소스 편집 시)
+            if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+                if (document.getElementById('sourceModal').classList.contains('active')) {
+                    e.preventDefault();
+                    document.getElementById('btnFormatSource').click();
+                }
+            }
         });
 
         // 저장 API 호출

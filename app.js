@@ -9,10 +9,11 @@ const beautify = require('js-beautify').html;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const PUBLIC_DIR = process.env.PUBLIC_DIR 
-    ? path.resolve(process.env.PUBLIC_DIR) 
+const PUBLIC_DIR = process.env.PUBLIC_DIR
+    ? path.resolve(process.env.PUBLIC_DIR)
     : path.join(__dirname, 'public');
 const BACKUP_DIR = path.join(__dirname, 'backup');
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin1234';
 
 // ================================
 // 보안 미들웨어 설정
@@ -51,11 +52,24 @@ app.use(session({
     }
 }));
 
+// 인증 미들웨어
+function isAuthenticated(req, res, next) {
+    if (req.session.loggedIn) {
+        return next();
+    }
+    res.redirect('/login');
+}
+
 // ================================
 // 보안 헬퍼 함수
 // ================================
 
-// Path Traversal 방지: 경로가 허용된 디렉토리 내에 있는지 확인
+/**
+ * 경로 트래버설 공격 방지를 위해 파일 경로가 유효한 디렉토리 내에 있는지 확인합니다.
+ * @param {string} filename - 검사할 파일명
+ * @param {string} [baseDir=PUBLIC_DIR] - 기준 디렉토리
+ * @returns {boolean} 안전 여부
+ */
 function isPathSafe(filename, baseDir = PUBLIC_DIR) {
     if (!filename || typeof filename !== 'string') {
         return false;
@@ -97,7 +111,11 @@ function getBackupFolderName(filename) {
     return withoutExt.replace(/[\/\\]/g, '__');
 }
 
-// 태그에 data-line 속성 주입 (멀티라인 지원 개선)
+/**
+ * 편집 가능한 태그에 data-line 속성을 주입하여 클라이언트 에디터에서 라인 추적을 가능하게 합니다.
+ * @param {string} content - 원본 HTML 내용
+ * @returns {string} 속성이 주입된 HTML 내용
+ */
 function injectLineNumbers(content) {
     const lines = content.split('\n');
     const result = [];
@@ -147,7 +165,13 @@ function injectLineNumbers(content) {
     return result.join('\n');
 }
 
-// 닫는 태그 위치 찾기 (네스팅 고려)
+/**
+ * HTML 내 특정 태그의 닫는 태그 위치를 재귀적으로(네스팅 고려) 찾습니다.
+ * @param {string[]} lines - 파일 내용 (라인별 배열)
+ * @param {number} startLineIndex - 시작 라인 인덱스
+ * @param {string} tagName - 찾을 태그명
+ * @returns {Object|null} 닫는 태그의 위치 정보 {lineIndex, index}
+ */
 function findClosingTagLocation(lines, startLineIndex, tagName) {
     let depth = 0;
 
@@ -185,7 +209,11 @@ function findClosingTagLocation(lines, startLineIndex, tagName) {
     return null;
 }
 
-// 에디터 관련 속성 제거 (저장 시 오염 방지)
+/**
+ * 에디터에서 사용된 특수 속성들을 제거하여 저장 시 파일 오염을 방지합니다.
+ * @param {string} content - 정화할 HTML 내용
+ * @returns {string} 정화된 HTML 내용
+ */
 function removeEditorAttributes(content) {
     if (!content) return content;
     return content
@@ -298,8 +326,33 @@ function replaceSingleLine(lines, lineIndex, newContent) {
 // 라우트
 // ================================
 
-// 메인 목록 페이지
-app.get('/', (req, res) => {
+// 로그인 페이지
+app.get('/login', (req, res) => {
+    if (req.session.loggedIn) {
+        return res.redirect('/');
+    }
+    res.render('login');
+});
+
+// 로그인 처리
+app.post('/login', (req, res) => {
+    const { password } = req.body;
+    if (password === ADMIN_PASSWORD) {
+        req.session.loggedIn = true;
+        res.redirect('/');
+    } else {
+        res.render('login', { error: '비밀번호가 올바르지 않습니다.' });
+    }
+});
+
+// 로그아웃
+app.get('/logout', (req, res) => {
+    req.session.destroy();
+    res.redirect('/login');
+});
+
+// 메인 목록 페이지 (인증 필요)
+app.get('/', isAuthenticated, (req, res) => {
     ensureDir(PUBLIC_DIR);
 
     const files = fs.readdirSync(PUBLIC_DIR)
@@ -314,7 +367,7 @@ app.get('/', (req, res) => {
 });
 
 // 에디터 페이지
-app.get('/editor', (req, res) => {
+app.get('/editor', isAuthenticated, (req, res) => {
     const filename = req.query.file;
 
     if (!filename) {
@@ -343,7 +396,7 @@ app.get('/editor', (req, res) => {
 });
 
 // 소스 조회 API (전체 파일 내용)
-app.get('/source', (req, res) => {
+app.get('/source', isAuthenticated, (req, res) => {
     const filename = req.query.filename;
 
     if (!filename) {
@@ -366,7 +419,7 @@ app.get('/source', (req, res) => {
 });
 
 // 소스 정렬 API (js-beautify 사용)
-app.post('/format-source', (req, res) => {
+app.post('/format-source', isAuthenticated, (req, res) => {
     const { content } = req.body;
 
     if (content === undefined) {
@@ -392,7 +445,7 @@ app.post('/format-source', (req, res) => {
 });
 
 // 라인 정보 조회 API (더블클릭으로 멀티라인 에디터 열기용)
-app.get('/line-info', (req, res) => {
+app.get('/line-info', isAuthenticated, (req, res) => {
     const { filename, line } = req.query;
 
     if (!filename || !line) {
@@ -447,7 +500,7 @@ app.get('/line-info', (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-app.post('/save-source', (req, res) => {
+app.post('/save-source', isAuthenticated, (req, res) => {
     const { filename, content } = req.body;
 
     if (!filename || content === undefined) {
@@ -495,7 +548,7 @@ app.post('/save-source', (req, res) => {
 });
 
 // 멀티라인 저장 API (특정 라인 범위 교체)
-app.post('/save-multiline', (req, res) => {
+app.post('/save-multiline', isAuthenticated, (req, res) => {
     const { filename, startLine, endLine, content } = req.body;
 
     if (!filename || !startLine || !endLine || content === undefined) {
@@ -576,7 +629,7 @@ app.post('/save-multiline', (req, res) => {
 });
 
 // 저장 API
-app.post('/save', (req, res) => {
+app.post('/save', isAuthenticated, (req, res) => {
     const { filename, line_number, content } = req.body;
     console.log('[DEBUG] POST /save', { filename, line_number });
 
@@ -729,7 +782,7 @@ app.post('/save', (req, res) => {
 });
 
 // 백업 목록 조회 API (일별 폴더 구조 지원)
-app.get('/backups', (req, res) => {
+app.get('/backups', isAuthenticated, (req, res) => {
     const { filename } = req.query;
 
     if (!filename) {
@@ -776,7 +829,7 @@ app.get('/backups', (req, res) => {
 });
 
 // 복원 API (일별 폴더 구조 + Diff 순차 복원 지원)
-app.post('/restore', (req, res) => {
+app.post('/restore', isAuthenticated, (req, res) => {
     const { filename, backupFile } = req.body;
 
     if (!filename || !backupFile) {

@@ -1189,6 +1189,14 @@
                         });
                         previewEl.innerHTML = html;
 
+                        // 첫 번째 변경 사항으로 스크롤 이동
+                        setTimeout(() => {
+                            const firstDiff = previewEl.querySelector('.diff-added, .diff-removed');
+                            if (firstDiff) {
+                                firstDiff.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }
+                        }, 100);
+
                     } else if (result.type === 'diff') {
                         // Diff 파일인 경우 (이미 구조화된 데이터)
                         const data = result.data;

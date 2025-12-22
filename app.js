@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
+const FileStore = require('session-file-store')(session);
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
@@ -49,10 +50,15 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(PUBLIC_DIR));
 
-// 세션 설정 (보안 강화)
+// 세션 설정 (보안 강화 및 FileStore 적용)
 app.use(session({
+    store: new FileStore({
+        path: './sessions',
+        ttl: 86400, // 1일
+        retries: 0
+    }),
     secret: process.env.SESSION_SECRET || 'inline-html-editor-secret-key-change-in-production',
-    resave: true, // rolling 사용 시 true 권장
+    resave: false, // FileStore 사용 시 false 권장
     saveUninitialized: false,
     rolling: true, // 활동 시 세션 만료 시간 갱신
     cookie: {

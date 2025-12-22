@@ -968,17 +968,23 @@ app.get('/backup-content', isAuthenticated, (req, res) => {
     }
 
     try {
-        let content;
         if (backupFile.endsWith('.json')) {
             // Diff 파일 정보 반환
             const diffData = JSON.parse(fs.readFileSync(backupPath, 'utf-8'));
-            content = `[Diff 정보]\n라인: ${diffData.lineNumber}\n\n[변경 전]\n${diffData.before}\n\n[변경 후]\n${diffData.after}`;
+            res.json({ 
+                success: true, 
+                type: 'diff',
+                data: diffData
+            });
         } else {
             // 스냅샷 파일 내용 반환
-            content = fs.readFileSync(backupPath, 'utf-8');
+            const content = fs.readFileSync(backupPath, 'utf-8');
+            res.json({ 
+                success: true, 
+                type: 'snapshot',
+                content 
+            });
         }
-
-        res.json({ success: true, content });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

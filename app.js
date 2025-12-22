@@ -30,6 +30,10 @@ app.use(helmet({
     contentSecurityPolicy: false // 인라인 스크립트 허용을 위해 비활성화
 }));
 
+// ProxyPass 사용 시 X-Forwarded-For 헤더 신뢰 설정
+// (Apache/Nginx 등 리버스 프록시 환경에서 필수)
+app.set('trust proxy', 1);
+
 // Rate Limiting: 요청 제한 (DoS 방지)
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15분
@@ -971,18 +975,18 @@ app.get('/backup-content', isAuthenticated, (req, res) => {
         if (backupFile.endsWith('.json')) {
             // Diff 파일 정보 반환
             const diffData = JSON.parse(fs.readFileSync(backupPath, 'utf-8'));
-            res.json({ 
-                success: true, 
+            res.json({
+                success: true,
                 type: 'diff',
                 data: diffData
             });
         } else {
             // 스냅샷 파일 내용 반환
             const content = fs.readFileSync(backupPath, 'utf-8');
-            res.json({ 
-                success: true, 
+            res.json({
+                success: true,
                 type: 'snapshot',
-                content 
+                content
             });
         }
     } catch (err) {

@@ -22,6 +22,22 @@ const ALLOWED_EXTENSIONS = (process.env.ALLOWED_EXTENSIONS || 'html')
     .map(ext => ext.trim().toLowerCase())
     .filter(ext => ext.length > 0);
 
+// 로그인 시도 제한 관리 (메모리 저장소)
+// IP별 { count, firstAttempt, blockedUntil } 저장
+const loginAttempts = new Map();
+
+// 1시간마다 만료된 항목 정리 (메모리 누수 방지)
+setInterval(() => {
+    const now = Date.now();
+    for (const [ip, data] of loginAttempts.entries()) {
+        if (data.blockedUntil && data.blockedUntil < now) {
+            loginAttempts.delete(ip);
+        } else if (!data.blockedUntil && now - data.firstAttempt > 60000) {
+            loginAttempts.delete(ip); // 1분 지난 실패 기록 삭제
+        }
+    }
+}, 3600000); // 1시간 주기
+
 // ================================
 // 보안 미들웨어 설정
 // ================================
@@ -364,11 +380,60 @@ app.get('/login', (req, res) => {
 // 로그인 처리
 app.post('/login', (req, res) => {
     const { password } = req.body;
+    const ip = req.ip;
+    const now = Date.now();
+
+    // 1. 차단 여부 확인
+    if (loginAttempts.has(ip)) {
+        const data = loginAttempts.get(ip);
+        if (data.blockedUntil) {
+            if (data.blockedUntil > now) {
+                const remainingMinutes = Math.ceil((data.blockedUntil - now) / 60000);
+                return res.render('login', {
+                    error: `로그인 시도가 너무 많아 접속이 차단되었습니다. ${remainingMinutes}분 후에 다시 시도해주세요.`
+                });
+            } else {
+                // 차단 시간 종료
+                loginAttempts.delete(ip);
+            }
+        }
+    }
+
     if (password === ADMIN_PASSWORD) {
+        // 로그인 성공 시 실패 기록 초기화
+        loginAttempts.delete(ip);
         req.session.loggedIn = true;
         res.redirect('/');
     } else {
-        res.render('login', { error: '비밀번호가 올바르지 않습니다.' });
+        // 로그인 실패 처리
+        let attemptData = loginAttempts.get(ip);
+
+        if (!attemptData) {
+            attemptData = { count: 1, firstAttempt: now, blockedUntil: null };
+            loginAttempts.set(ip, attemptData);
+        } else {
+            // 1분(60000ms) 윈도우 체크
+            if (now - attemptData.firstAttempt > 60000) {
+                // 1분이 지났으면 카운트 리셋
+                attemptData.count = 1;
+                attemptData.firstAttempt = now;
+            } else {
+                attemptData.count++;
+            }
+        }
+
+        // 5회 도달 시 차단
+        if (attemptData.count >= 5) {
+            attemptData.blockedUntil = now + 3600000; // 1시간 (60분 * 60초 * 1000ms)
+            return res.render('login', {
+                error: '비밀번호를 5회 연속 잘못 입력하여 1시간 동안 접속이 제한됩니다.'
+            });
+        }
+
+        const remainingAttempts = 5 - attemptData.count;
+        res.render('login', {
+            error: `비밀번호가 올바르지 않습니다. (1분 내 남은 시도 횟수: ${remainingAttempts}회)`
+        });
     }
 });
 

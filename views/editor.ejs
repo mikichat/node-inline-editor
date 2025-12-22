@@ -18,6 +18,17 @@
             background: linear-gradient(135deg, #3a4f7a 0%, #4f6fa9 50%, #6c8cd5 100%);
             min-height: 100vh;
             color: #e0e0e0;
+            margin: 0;
+        }
+
+        /* 에디터 UI 요소들에만 리셋 적용 */
+        .toolbar,
+        .modal,
+        .toast,
+        .loading-overlay,
+        .confirm-dialog {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #e0e0e0;
         }
 
         .toolbar {
@@ -119,31 +130,34 @@
         }
 
         .content-frame {
-            background: white;
+            background: transparent;
+            /* 원본 배경색 유지 */
             border-radius: 16px;
             padding: 0;
             min-height: calc(100vh - 200px);
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            overflow: hidden;
+            /* overflow: hidden; 삭제하여 원본 레이아웃 보존 */
         }
 
-        /* 원본 HTML 스타일 격리 - 에디터 스타일 영향 제거 */
+        /* 원본 HTML 스타일 최대한 보존 */
         .content-frame * {
             all: revert;
+            box-sizing: revert;
         }
 
-        /* data-line 요소만 에디터 스타일 적용 */
+        /* 편집 영역 강조 스타일만 적용 (원본 디자인 방해 최소화) */
         .content-frame [data-line] {
             cursor: text !important;
             outline: 2px solid transparent !important;
             transition: outline 0.15s ease !important;
-            color: #1a1a1a !important;
+            /* color 강제 설정 삭제 - 원본 색상 유지 */
         }
 
         .content-frame [data-line]:focus {
             outline: 2px dashed #8b5cf6 !important;
             outline-offset: 2px !important;
-            /* 배경색 없음 - 원본 콘텐츠 색상 유지 */
+            background: rgba(139, 92, 246, 0.05) !important;
+            /* 아주 연한 강조 */
         }
 
         .content-frame [data-line]::before {

@@ -1125,12 +1125,12 @@
         }
     </script>
     <script>
-        // 유휴 시간 자동 로그아웃 (10분, 9분에 경고)
+        // 유휴 시간 자동 로그아웃 (10분, 5분에 경고)
         (function () {
             let idleTimer;
             let countdownTimer;
             let secondsLeft = 60;
-            const idleLimit = 9 * 60 * 1000; // 9분 후 경고 시작
+            const idleLimit = 5 * 60 * 1000; // 5분 후 경고 시작
 
             const warningModal = document.getElementById('logoutWarningModal');
             const countdownEl = document.getElementById('logoutCountdown');

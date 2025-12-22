@@ -307,6 +307,117 @@
             background: linear-gradient(135deg, #ff6b6b, #ee5a24);
             color: white;
         }
+
+        /* 로딩 오버레이 */
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(5px);
+            z-index: 4000;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .loading-overlay.active {
+            display: flex;
+        }
+
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 255, 255, 0.2);
+            border-top-color: #00d9ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .loading-text {
+            color: white;
+            font-size: 1.1rem;
+            font-weight: 500;
+        }
+
+        /* 확인 모달 커스텀 */
+        #confirmModal {
+            z-index: 5000;
+            /* 모든 모달보다 위에 */
+        }
+
+        .confirm-dialog {
+            background: #1a1a2e;
+            padding: 30px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+        }
+
+        .confirm-message {
+            color: #fff;
+            font-size: 1.1rem;
+            margin-bottom: 25px;
+            line-height: 1.6;
+            white-space: pre-line;
+        }
+
+        .confirm-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+        }
+
+        .btn-confirm {
+            padding: 10px 25px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-confirm-ok {
+            background: linear-gradient(135deg, #00d9ff, #00ff88);
+            color: #1a1a2e;
+        }
+
+        .btn-confirm-cancel {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+        }
+
+        .btn-confirm:hover {
+            transform: translateY(-2px);
+            filter: brightness(1.1);
+        }
+
+        /* 세션 만료 경고 모달 */
+        #logoutWarningModal .confirm-dialog {
+            border: 2px solid #ff6b6b;
+            background: #1a0f0f;
+        }
+
+        .countdown-timer {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #ff6b6b;
+            margin: 15px 0;
+            text-shadow: 0 0 10px rgba(255, 107, 107, 0.3);
+        }
     </style>
 </head>
 
@@ -469,6 +580,37 @@
     </div>
 
     <div class="toast" id="toast"></div>
+
+    <!-- 로딩 오버레이 -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text" id="loadingText">처리 중...</div>
+    </div>
+
+    <!-- 커스텀 확인 모달 -->
+    <div class="modal-overlay" id="confirmModal">
+        <div class="confirm-dialog">
+            <div class="confirm-message" id="confirmMessage"></div>
+            <div class="confirm-buttons">
+                <button class="btn-confirm btn-confirm-cancel" id="btnConfirmCancel">취소</button>
+                <button class="btn-confirm btn-confirm-ok" id="btnConfirmOk">확인</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 세션 만료 경고 모달 -->
+    <div class="modal-overlay" id="logoutWarningModal">
+        <div class="confirm-dialog">
+            <h2 style="color: #ff6b6b; margin-bottom: 10px;">⚠️ 세션 만료 경고</h2>
+            <div class="confirm-message">활동이 없어 곧 자동 로그아웃됩니다.</div>
+            <div class="countdown-timer" id="logoutCountdown">60</div>
+            <div class="confirm-message">세션을 연장하시겠습니까?</div>
+            <div class="confirm-buttons">
+                <button class="btn-confirm btn-confirm-cancel" id="btnLogoutNow">로그아웃</button>
+                <button class="btn-confirm btn-confirm-ok" id="btnExtendSession">연장하기</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         const filename = '<%= filename %>';
@@ -893,18 +1035,68 @@
 
         // 미리보기에서 바로 복원
         document.getElementById('btnRestoreFromPreview').addEventListener('click', function () {
+            console.log('[DEBUG] "이 시점으로 복원" button clicked. Pending file:', pendingRestoreFile);
             if (pendingRestoreFile) {
                 restoreBackup(pendingRestoreFile);
+            } else {
+                console.warn('[DEBUG] No pendingRestoreFile found.');
             }
         });
 
+        // 로딩 오버레이 표시/숨기기
+        function showLoading(message = '처리 중...') {
+            document.getElementById('loadingText').textContent = message;
+            document.getElementById('loadingOverlay').classList.add('active');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingOverlay').classList.remove('active');
+        }
+
+        // 커스텀 확인창 모달
+        function customConfirm(message) {
+            return new Promise((resolve) => {
+                const modal = document.getElementById('confirmModal');
+                const msgEl = document.getElementById('confirmMessage');
+                const okBtn = document.getElementById('btnConfirmOk');
+                const cancelBtn = document.getElementById('btnConfirmCancel');
+
+                msgEl.textContent = message;
+                modal.classList.add('active');
+
+                const cleanup = (result) => {
+                    modal.classList.remove('active');
+                    okBtn.removeEventListener('click', onOk);
+                    cancelBtn.removeEventListener('click', onCancel);
+                    resolve(result);
+                };
+
+                const onOk = () => cleanup(true);
+                const onCancel = () => cleanup(false);
+
+                okBtn.addEventListener('click', onOk);
+                cancelBtn.addEventListener('click', onCancel);
+            });
+        }
+
         // 백업에서 복원
         async function restoreBackup(backupFile) {
-            if (!confirm(`'${backupFile}' 백업으로 복원하시겠습니까?\n현재 내용은 자동으로 백업됩니다.`)) {
+            console.log('[DEBUG] restoreBackup called for:', backupFile);
+
+            const confirmed = await customConfirm(`'${backupFile}' 백업으로 복원하시겠습니까?\n현재 내용은 자동으로 백업됩니다.`);
+            if (!confirmed) {
+                console.log('[DEBUG] Restore canceled by user via custom modal.');
                 return;
             }
 
+            // 즉시 모달 닫고 로딩 표시
+            document.getElementById('restoreModal').classList.remove('active');
+            document.getElementById('previewModal').classList.remove('active');
+            pendingRestoreFile = null;
+            showLoading('복원 중...');
+
             try {
+                console.log('[DEBUG] Sending POST /restore request...');
                 const response = await fetch('/restore', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -912,39 +1104,87 @@
                 });
 
                 const result = await response.json();
+                console.log('[DEBUG] Server response received:', result);
 
                 if (result.success) {
-                    document.getElementById('restoreModal').classList.remove('active');
-                    showToast('✓ 복원되었습니다. 페이지를 새로고침합니다.');
-                    setTimeout(() => location.reload(), 1500);
+                    showLoading('복원 완료! 새로고침 중...');
+                    setTimeout(() => {
+                        console.log('[DEBUG] Reloading page...');
+                        location.reload();
+                    }, 500);
                 } else {
+                    hideLoading();
+                    console.error('[DEBUG] Restore failed:', result.error);
                     showToast(result.error || '복원 실패', true);
                 }
             } catch (err) {
+                hideLoading();
+                console.error('[DEBUG] Fetch error during restore:', err);
                 showToast('복원 중 오류 발생', true);
             }
         }
     </script>
     <script>
-        // 유휴 시간 자동 로그아웃 (10분)
+        // 유휴 시간 자동 로그아웃 (10분, 9분에 경고)
         (function () {
             let idleTimer;
-            const idleLimit = 10 * 60 * 1000; // 10분
+            let countdownTimer;
+            let secondsLeft = 60;
+            const idleLimit = 9 * 60 * 1000; // 9분 후 경고 시작
 
-            function resetTimer() {
+            const warningModal = document.getElementById('logoutWarningModal');
+            const countdownEl = document.getElementById('logoutCountdown');
+            const extendBtn = document.getElementById('btnExtendSession');
+            const logoutBtn = document.getElementById('btnLogoutNow');
+
+            function startIdleTimer() {
                 clearTimeout(idleTimer);
-                idleTimer = setTimeout(() => {
-                    alert('10분간 활동이 없어 보안을 위해 자동 로그아웃되었습니다.');
-                    window.location.href = '/logout';
-                }, idleLimit);
+                clearInterval(countdownTimer);
+                warningModal.classList.remove('active');
+
+                idleTimer = setTimeout(showWarning, idleLimit);
             }
 
-            // 활동 감지 이벤트
-            window.onload = resetTimer;
-            document.onmousemove = resetTimer;
-            document.onkeydown = resetTimer;
-            document.onclick = resetTimer;
-            document.onscroll = resetTimer;
+            function showWarning() {
+                secondsLeft = 60;
+                countdownEl.textContent = secondsLeft;
+                warningModal.classList.add('active');
+
+                countdownTimer = setInterval(() => {
+                    secondsLeft--;
+                    countdownEl.textContent = secondsLeft;
+
+                    if (secondsLeft <= 0) {
+                        clearInterval(countdownTimer);
+                        performLogout('활동이 없어 보안을 위해 자동 로그아웃되었습니다.');
+                    }
+                }, 1000);
+            }
+
+            function performLogout(message) {
+                if (message) alert(message);
+                window.location.href = '/logout';
+            }
+
+            function resetAll() {
+                // 경고창이 떠 있는 동안에는 마우스 움직임만으로 리셋되지 않게 하려면 
+                // 아래 if 조건을 활용할 수 있습니다. 
+                // 여기서는 사용자 요청대로 버튼 클릭 또는 활동 시 리셋되도록 합니다.
+                if (!warningModal.classList.contains('active')) {
+                    startIdleTimer();
+                }
+            }
+
+            // 버튼 이벤트
+            extendBtn.addEventListener('click', startIdleTimer);
+            logoutBtn.addEventListener('click', () => performLogout());
+
+            // 활동 감지 이벤트 (활동 시 타이머 리셋)
+            window.onload = startIdleTimer;
+            document.onmousemove = resetAll;
+            document.onkeydown = resetAll;
+            document.onclick = resetAll;
+            document.onscroll = resetAll;
         })();
     </script>
 </body>

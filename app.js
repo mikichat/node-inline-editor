@@ -694,17 +694,7 @@ app.post('/save', isAuthenticated, (req, res) => {
             fs.writeFileSync(lastBackupPath, fileContent, 'utf-8');
             backupPath = firstBackupPath;
         } else {
-            // 중간 수정: Diff만 저장 (before + after)
-            const existingDiffs = fs.readdirSync(backupFileDir)
-                .filter(f => f.match(/^\d{2}_diff\.json$/))
-                .sort();
-            const nextNum = String(existingDiffs.length + 1).padStart(2, '0');
-            const diffPath = path.join(backupFileDir, `${nextNum}_diff.json`);
-
-            // 변경 전 내용 저장 (복원용)
-            const beforeContent = lines[lineIndex];
-
-            // 변경 후 내용을 미리 계산 (복원용)
+            // 변경 후 내용을 미리 계산 (복원용 및 멀티라인 체크)
             const sanitizedForDiff = removeEditorAttributes(content);
             const tempLines = [...lines];
             const tempResult = replaceSingleLine(tempLines, lineIndex, sanitizedForDiff);
@@ -729,17 +719,46 @@ app.post('/save', isAuthenticated, (req, res) => {
                 });
             }
 
-            const afterContent = tempResult.lines[lineIndex];
+            // 무결성 검사 (기존 백업 체인과 현재 파일 비교)
+            const expectedContent = reconstructContent(backupFolderName, today, ext);
+            let integrityCheck = false;
 
-            const timestamp = new Date().toISOString();
-            const diffData = {
-                timestamp,
-                lineNumber: parseInt(line_number),
-                before: beforeContent,
-                after: afterContent
-            };
-            fs.writeFileSync(diffPath, JSON.stringify(diffData, null, 2), 'utf-8');
-            backupPath = diffPath;
+            // reconstructContent가 null이면 (00_first 없음) 무조건 실패 처리 -> 스냅샷 생성
+            // fileContent는 위에서 readFileSync로 읽은 현재 파일 내용
+            if (expectedContent && expectedContent === fileContent) {
+                integrityCheck = true;
+            } else {
+                console.log('[INFO] Integrity check failed. Creating snapshot backup instead of diff.');
+            }
+
+            if (integrityCheck) {
+                // 중간 수정: Diff만 저장 (before + after)
+                const existingDiffs = fs.readdirSync(backupFileDir)
+                    .filter(f => f.match(/^\d{2}_diff\.json$/))
+                    .sort();
+                const nextNum = String(existingDiffs.length + 1).padStart(2, '0');
+                const diffPath = path.join(backupFileDir, `${nextNum}_diff.json`);
+
+                // 변경 전 내용 저장 (복원용)
+                const beforeContent = lines[lineIndex];
+                const afterContent = tempResult.lines[lineIndex];
+
+                const timestamp = new Date().toISOString();
+                const diffData = {
+                    timestamp,
+                    lineNumber: parseInt(line_number),
+                    before: beforeContent,
+                    after: afterContent
+                };
+                fs.writeFileSync(diffPath, JSON.stringify(diffData, null, 2), 'utf-8');
+                backupPath = diffPath;
+            } else {
+                // 스냅샷 생성 (체인 깨짐 또는 멀티라인/외부 수정 발생 시)
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                const snapshotPath = path.join(backupFileDir, `${timestamp}_auto-snapshot${ext}`);
+                fs.writeFileSync(snapshotPath, fileContent, 'utf-8');
+                backupPath = snapshotPath;
+            }
         }
 
         // 컨텐츠 정화 (에디터 속성 제거)
@@ -858,13 +877,16 @@ app.get('/backups', isAuthenticated, (req, res) => {
 // 복원 API (일별 폴더 구조 + Diff 순차 복원 지원)
 app.post('/restore', isAuthenticated, (req, res) => {
     const { filename, backupFile } = req.body;
+    console.log(`[RESTORE] Requested: filename=${filename}, backupFile=${backupFile}`);
 
     if (!filename || !backupFile) {
+        console.error('[RESTORE] Error: Missing parameters');
         return res.status(400).json({ error: '필수 파라미터가 누락되었습니다.' });
     }
 
     // 보안: Path Traversal 방지 및 확장자 체크
     if (!isPathSafe(filename) || !isAllowedExtension(filename)) {
+        console.error(`[RESTORE] Security Error: Unsafe path or extension (${filename})`);
         return res.status(403).json({ error: '접근이 거부되었습니다. 허용되지 않은 파일 형식입니다.' });
     }
 
@@ -873,7 +895,11 @@ app.post('/restore', isAuthenticated, (req, res) => {
     const backupPath = path.join(BACKUP_DIR, backupFolderName, backupFile);
     const filePath = path.join(PUBLIC_DIR, filename);
 
+    console.log(`[RESTORE] Backup Path: ${backupPath}`);
+    console.log(`[RESTORE] Target File: ${filePath}`);
+
     if (!fs.existsSync(backupPath)) {
+        console.error(`[RESTORE] Error: Backup file not found at ${backupPath}`);
         return res.status(404).json({ error: '백업 파일을 찾을 수 없습니다.' });
     }
 
@@ -888,6 +914,7 @@ app.post('/restore', isAuthenticated, (req, res) => {
         const ext = path.extname(filename);
         const preRestoreBackup = path.join(todayBackupDir, `${timestamp}_pre-restore${ext}`);
         fs.writeFileSync(preRestoreBackup, currentContent, 'utf-8');
+        console.log(`[RESTORE] Pre-restore backup saved: ${preRestoreBackup}`);
 
         let restoredContent;
 
@@ -898,38 +925,10 @@ app.post('/restore', isAuthenticated, (req, res) => {
             const targetDiff = parts[1]; // 예: "02_diff.json"
             const targetNum = parseInt(targetDiff.split('_')[0]); // 예: 2
 
-            const dayDir = path.join(BACKUP_DIR, backupFolderName, dateFolder);
-            const firstPath = path.join(dayDir, `00_first${ext}`);
-
-            if (!fs.existsSync(firstPath)) {
+            restoredContent = reconstructContent(backupFolderName, dateFolder, ext, targetNum);
+            if (restoredContent === null) {
                 return res.status(400).json({ error: `원본 파일(00_first${ext})이 없어 diff 복원이 불가능합니다.` });
             }
-
-            // 원본 로드
-            restoredContent = fs.readFileSync(firstPath, 'utf-8');
-
-            // diff 파일들을 순차적으로 적용 (01 ~ targetNum)
-            for (let i = 1; i <= targetNum; i++) {
-                const diffFileName = `${String(i).padStart(2, '0')}_diff.json`;
-                const diffFilePath = path.join(dayDir, diffFileName);
-
-                if (fs.existsSync(diffFilePath)) {
-                    const diffData = JSON.parse(fs.readFileSync(diffFilePath, 'utf-8'));
-
-                    if (diffData.after) {
-                        // before -> after 로 교체
-                        const lines = restoredContent.split('\n');
-                        const lineIdx = diffData.lineNumber - 1;
-
-                        if (lineIdx >= 0 && lineIdx < lines.length) {
-                            lines[lineIdx] = diffData.after;
-                            restoredContent = lines.join('\n');
-                        }
-                    }
-                }
-            }
-
-            console.log(`[DEBUG] Restored via diff: applied ${targetNum} diffs`);
         } else {
             // 스냅샷 파일로 복원 (00_first, last 등)
             restoredContent = fs.readFileSync(backupPath, 'utf-8');
@@ -1034,6 +1033,41 @@ app.post('/undo', (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+// Helper to verify integrity and reconstruct content
+function reconstructContent(backupFolderName, dateFolder, ext, targetNum = Infinity) {
+    const dayDir = path.join(BACKUP_DIR, backupFolderName, dateFolder);
+    const firstPath = path.join(dayDir, `00_first${ext}`);
+
+    // If 00_first doesn't exist, we can't reconstruct
+    if (!fs.existsSync(firstPath)) return null;
+
+    let content = fs.readFileSync(firstPath, 'utf-8');
+    const files = fs.readdirSync(dayDir);
+    const diffFiles = files.filter(f => f.match(/^\d{2}_diff\.json$/)).sort();
+
+    for (const diffFile of diffFiles) {
+        const num = parseInt(diffFile.split('_')[0]);
+        if (num > targetNum) break;
+
+        const diffPath = path.join(dayDir, diffFile);
+        try {
+            const diffData = JSON.parse(fs.readFileSync(diffPath, 'utf-8'));
+            if (diffData.after) {
+                const lines = content.split('\n');
+                const lineIdx = diffData.lineNumber - 1;
+                if (lineIdx >= 0 && lineIdx < lines.length) {
+                    lines[lineIdx] = diffData.after;
+                    content = lines.join('\n');
+                }
+            }
+        } catch (e) {
+            console.error('Error applying diff:', e);
+            break; // Stop applying subsequent diffs if one fails
+        }
+    }
+    return content;
+}
 
 // 서버 시작
 app.listen(PORT, () => {

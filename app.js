@@ -7,6 +7,9 @@ const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
 const beautify = require('js-beautify').html;
+const csrf = require('csurf');
+const cookieParser = require('cookie-parser');
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -43,9 +46,8 @@ setInterval(() => {
 // ================================
 
 // Helmet: HTTP 보안 헤더 설정
-app.use(helmet({
-    contentSecurityPolicy: false // 인라인 스크립트 허용을 위해 비활성화
-}));
+// Helmet 설정은 CSRF, Nonce 설정 후 적용하기 위해 아래로 이동함
+
 
 // ProxyPass 사용 시 X-Forwarded-For 헤더 신뢰 설정
 // (Apache/Nginx 등 리버스 프록시 환경에서 필수)
@@ -63,7 +65,9 @@ app.use(limiter);
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(express.json({ limit: '50mb' }));
+
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(cookieParser());
 app.use(express.static(PUBLIC_DIR));
 
 // 세션 설정 (보안 강화 및 FileStore 적용)
@@ -83,6 +87,44 @@ app.use(session({
         maxAge: 600000, // 10분
         sameSite: 'strict'
     }
+}));
+
+// ================================
+// 추가 보안 설정 (CSRF, CSP, Nonce)
+// ================================
+
+// CSRF 보호 설정
+app.use(csrf({ cookie: false })); // 세션 기반
+
+// Nonce 및 로컬 변수 미들웨어
+app.use((req, res, next) => {
+    res.locals.nonce = uuidv4();
+    res.locals.csrfToken = req.csrfToken();
+    next();
+});
+
+// Helmet: HTTP 보안 헤더 설정 (CSP 포함)
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: [
+                "'self'",
+                "https://cdnjs.cloudflare.com", // 외부 라이브러리 허용
+                (req, res) => `'nonce-${res.locals.nonce}'` // Nonce 허용
+            ],
+            styleSrc: [
+                "'self'",
+                "'unsafe-inline'", // 스타일은 편의상 인라인 허용 (필요시 nonce 적용 가능)
+                "https://fonts.googleapis.com" // 폰트 허용
+            ],
+            fontSrc: ["'self'", "https://fonts.gstatic.com"],
+            imgSrc: ["'self'", "data:", "blob:"],
+            connectSrc: ["'self'"],
+            objectSrc: ["'none'"],
+            upgradeInsecureRequests: [],
+        },
+    },
 }));
 
 // 인증 미들웨어

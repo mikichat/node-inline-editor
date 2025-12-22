@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>편집: <%= filename %>
     </title>
-    <style>
+    <style nonce="<%= nonce %>">
         * {
             margin: 0;
             padding: 0;
@@ -564,7 +564,7 @@
         }
     </style>
     <!-- JsDiff 라이브러리 추가 -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js" nonce="<%= nonce %>"></script>
 </head>
 
 <body>
@@ -754,8 +754,25 @@
         </div>
     </div>
 
-    <script>
+    <script nonce="<%= nonce %>">
         const filename = '<%= filename %>';
+        const csrfToken = '<%= csrfToken %>';
+
+        // Fetch Interceptor for CSRF Token
+        const originalFetch = window.fetch;
+        window.fetch = function (url, options) {
+            if (!options) options = {};
+            if (!options.headers) options.headers = {};
+
+            if (options.headers instanceof Headers) {
+                options.headers.append('CSRF-Token', csrfToken);
+            } else {
+                options.headers['CSRF-Token'] = csrfToken;
+            }
+
+            return originalFetch(url, options);
+        };
+
         let originalText = '';
 
         // 토스트 알림 표시
@@ -1324,7 +1341,7 @@
             }
         }
     </script>
-    <script>
+    <script nonce="<%= nonce %>">
         // 유휴 시간 자동 로그아웃 (10분, 5분에 경고)
         (function () {
             let idleTimer;

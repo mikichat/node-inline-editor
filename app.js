@@ -1086,8 +1086,8 @@ function reconstructContent(backupFolderName, dateFolder, ext, targetNum = Infin
 }
 
 // 서버 시작
-app.listen(PORT, () => {
-    console.log(`서버가 http://localhost:${PORT} 에서 실행 중입니다.`);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`서버가 http://0.0.0.0:${PORT} 에서 실행 중입니다.`);
     ensureDir(PUBLIC_DIR);
     ensureDir(BACKUP_DIR);
 });

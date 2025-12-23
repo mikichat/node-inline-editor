@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "웹 기반 인라인 HTML 텍스트 에디터",
   "main": "app.js",
+  "engines": {
+    "node": ">=16.0.0"
+  },
   "scripts": {
     "prestart": "node scripts/kill-port.js",
     "start": "node app.js",
@@ -16,9 +19,9 @@
     "express": "^4.18.2",
     "express-rate-limit": "^7.5.0",
     "express-session": "^1.17.3",
-    "helmet": "^8.0.0",
+    "helmet": "^7.1.0",
     "js-beautify": "^1.15.4",
     "session-file-store": "^1.5.0",
-    "uuid": "^13.0.0"
+    "uuid": "^9.0.1"
   }
 }

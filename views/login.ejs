@@ -38,6 +38,7 @@
             font-size: 2rem;
             background: linear-gradient(90deg, #4f46e5, #0ea5e9);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
         }
 
@@ -100,14 +101,13 @@
             border-radius: 8px;
             font-size: 0.85rem;
             margin-bottom: 20px;
-            display: <%=typeof error !=='undefined' ? 'block': 'none' %>;
         }
     </style>
 </head>
 
 <body>
     <div class="login-card">
-        <h1>🔐 Admin Login</h1>
+        <h1>🔐 Login</h1>
 
         <% if (typeof error !=='undefined' ) { %>
             <div class="error-msg">

@@ -125,6 +125,59 @@
             font-size: 0.9rem;
             color: #cbd5e1;
         }
+
+        /* 검색 바 스타일 */
+        .search-container {
+            margin-bottom: 30px;
+        }
+
+        .search-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 20px;
+            font-size: 1.1rem;
+            color: #94a3b8;
+            pointer-events: none;
+        }
+
+        #fileSearch {
+            width: 100%;
+            padding: 15px 15px 15px 50px;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            font-size: 1rem;
+            color: #1e293b;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            outline: none;
+        }
+
+        #fileSearch:focus {
+            border-color: #4f46e5;
+            box-shadow: 0 10px 15px -3px rgba(79, 70, 229, 0.1);
+        }
+
+        #fileSearch::placeholder {
+            color: #94a3b8;
+        }
+
+        .no-results {
+            display: none;
+            text-align: center;
+            padding: 40px 20px;
+            color: #94a3b8;
+        }
+
+        .no-results p {
+            font-size: 1.1rem;
+            margin-bottom: 5px;
+        }
     </style>
 </head>
 
@@ -136,7 +189,14 @@
         </div>
         <h1>📄 HTML 파일 목록</h1>
 
-        <div class="file-list">
+        <div class="search-container">
+            <div class="search-wrapper">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="fileSearch" placeholder="파일 이름으로 검색..." autocomplete="off">
+            </div>
+        </div>
+
+        <div class="file-list" id="fileList">
             <% if (files.length===0) { %>
                 <div class="empty-state">
                     <p>HTML 파일이 없습니다.</p>
@@ -160,10 +220,40 @@
                             <a href="/editor?file=<%= encodeURIComponent(file.name) %>" class="btn-edit">수정</a>
                         </div>
                         <% }); %>
+                            <div id="noResults" class="no-results">
+                                <p>검색 결과가 없습니다.</p>
+                                <span style="font-size: 0.85rem; color: #cbd5e1;">다른 검색어를 입력해 보세요.</span>
+                            </div>
                             <% } %>
         </div>
     </div>
     <script nonce="<%= nonce %>">
+        // 파일 검색 기능
+        const searchInput = document.getElementById('fileSearch');
+        const fileItems = document.querySelectorAll('.file-item');
+        const noResults = document.getElementById('noResults');
+
+        if (searchInput) {
+            searchInput.addEventListener('input', function (e) {
+                const query = e.target.value.toLowerCase().trim();
+                let visibleCount = 0;
+
+                fileItems.forEach(item => {
+                    const fileName = item.querySelector('.file-name').textContent.toLowerCase();
+                    if (fileName.includes(query)) {
+                        item.style.display = 'flex';
+                        visibleCount++;
+                    } else {
+                        item.style.display = 'none';
+                    }
+                });
+
+                if (noResults) {
+                    noResults.style.display = (visibleCount === 0 && fileItems.length > 0) ? 'block' : 'none';
+                }
+            });
+        }
+
         // 유휴 시간 자동 로그아웃 (10분)
         (function () {
             let idleTimer;

@@ -416,7 +416,17 @@ app.get('/login', (req, res) => {
     if (req.session.loggedIn) {
         return res.redirect('/');
     }
-    res.render('login');
+
+    let errorMsg = undefined;
+    if (req.query.msg === 'logged_out') {
+        // 단순 로그아웃 알림은 에러로 표시하지 않음 (선택 사항)
+    } else if (req.query.error === 'session_expired') {
+        errorMsg = '세션이 만료되었습니다. 다시 로그인해주세요.';
+    } else if (req.query.error === 'csrf_invalid') {
+        errorMsg = '보안 토큰이 유효하지 않습니다. 다시 시도해주세요.';
+    }
+
+    res.render('login', { error: errorMsg });
 });
 
 // 로그인 처리
@@ -481,8 +491,11 @@ app.post('/login', (req, res) => {
 
 // 로그아웃
 app.get('/logout', (req, res) => {
-    req.session.destroy();
-    res.redirect('/login');
+    req.session.destroy((err) => {
+        if (err) console.error('[DEBUG] Logout error:', err);
+        res.clearCookie('connect.sid'); // 세션 쿠키 명시적 삭제
+        res.redirect('/login?msg=logged_out');
+    });
 });
 
 // 메인 목록 페이지 (인증 필요)
@@ -1191,6 +1204,28 @@ function reconstructContent(backupFolderName, dateFolder, ext, targetNum = Infin
     }
     return content;
 }
+
+// CSRF 및 일반 에러 핸들러
+app.use((err, req, res, next) => {
+    if (err.code === 'EBADCSRFTOKEN') {
+        console.warn(`[SECURITY] CSRF token mismatch/expired: ${req.method} ${req.url} (IP: ${req.ip})`);
+
+        // AJAX/JSON 요청인 경우 JSON 응답
+        if (req.xhr || (req.headers.accept && req.headers.accept.indexOf('json') > -1)) {
+            return res.status(403).json({
+                error: '보안 토큰이 만료되었거나 유효하지 않습니다. 페이지를 새로고침 해주세요.',
+                retry: true
+            });
+        }
+
+        // 일반 페이지 요청인 경우 로그인으로 리다이렉트
+        return res.status(403).redirect('/login?error=csrf_invalid');
+    }
+
+    // 기타 에러 처리
+    console.error('[SERVER ERROR]', err);
+    res.status(err.status || 500).send(err.message || '서버 내부 오류가 발생했습니다.');
+});
 
 // 서버 시작
 app.listen(PORT, '0.0.0.0', () => {
